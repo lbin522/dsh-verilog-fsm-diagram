@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Verilog 状态机图",
+    "description": "把 Verilog 状态机代码转换成状态跳转图：解析 case 状态机，生成支持全局/单线条件编号的交互式 SVG，并可从跳转表生成可综合 Verilog。"
+  }
+}

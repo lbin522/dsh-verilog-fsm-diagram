@@ -1,0 +1,3 @@
+- insert:
+    - id: verilog-fsm-diagram
+      name: '@local/verilog-fsm-diagram'

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Verilog FSM diagram",
+    "description": "Turns Verilog FSM code into a state-transition diagram: parses case-based state machines, renders an interactive SVG with global or per-edge numbered conditions, and generates synthesizable Verilog from an editable transition table."
+  }
+}
