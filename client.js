@@ -1218,6 +1218,81 @@ window.__ModuleLoader__.load({
       return { x: cx + dx * scale, y: cy + dy * scale }
     }
 
+    /** Point, tangent and normal at a 0..1 distance fraction of a polyline. */
+    function pointAtPolylinePercent(points, percent) {
+      if (points.length === 0) return null
+      if (points.length === 1) {
+        return { point: points[0], tangent: { x: 1, y: 0 }, normal: { x: 0, y: 1 }, percent: 0 }
+      }
+      const lengths = []
+      let total = 0
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const length = Math.hypot(points[index + 1].x - points[index].x, points[index + 1].y - points[index].y)
+        lengths.push(length)
+        total += length
+      }
+      let target = Math.max(0, Math.min(1, percent)) * total
+      for (let index = 0; index < lengths.length; index += 1) {
+        const length = lengths[index]
+        if (target <= length || index === lengths.length - 1) {
+          const ratio = length === 0 ? 0 : Math.max(0, Math.min(1, target / length))
+          const from = points[index]
+          const to = points[index + 1]
+          const point = { x: from.x + (to.x - from.x) * ratio, y: from.y + (to.y - from.y) * ratio }
+          const dx = to.x - from.x
+          const dy = to.y - from.y
+          const norm = Math.hypot(dx, dy) || 1
+          return {
+            point,
+            tangent: { x: dx / norm, y: dy / norm },
+            normal: { x: -dy / norm, y: dx / norm },
+            percent: total === 0 ? 0 : (target / total),
+          }
+        }
+        target -= length
+      }
+      return { point: points[points.length - 1], tangent: { x: 1, y: 0 }, normal: { x: 0, y: 1 }, percent: 1 }
+    }
+
+    /** Closest point on a polyline plus the signed perpendicular distance. */
+    function projectOnPolyline(points, target) {
+      if (points.length < 2) return null
+      let best = null
+      let before = 0
+      let total = 0
+      const lengths = []
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const length = Math.hypot(points[index + 1].x - points[index].x, points[index + 1].y - points[index].y)
+        lengths.push(length)
+        total += length
+      }
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const from = points[index]
+        const to = points[index + 1]
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const lengthSquared = dx * dx + dy * dy
+        let ratio = lengthSquared === 0 ? 0 : ((target.x - from.x) * dx + (target.y - from.y) * dy) / lengthSquared
+        ratio = Math.max(0, Math.min(1, ratio))
+        const point = { x: from.x + dx * ratio, y: from.y + dy * ratio }
+        const distance = Math.hypot(target.x - point.x, target.y - point.y)
+        if (best === null || distance < best.distance) {
+          const norm = Math.hypot(dx, dy) || 1
+          const normal = { x: -dy / norm, y: dx / norm }
+          const signedOffset = (target.x - point.x) * normal.x + (target.y - point.y) * normal.y
+          best = {
+            point,
+            distance,
+            signedOffset,
+            normal,
+            percent: total === 0 ? 0 : (before + lengths[index] * ratio) / total,
+          }
+        }
+        before += lengths[index]
+      }
+      return best
+    }
+
     /** Arrowhead polygon at `tip` pointing along direction (dx, dy). */
     function arrowHead(tip, dx, dy) {
       const length = Math.sqrt(dx * dx + dy * dy) || 1
@@ -1353,6 +1428,9 @@ window.__ModuleLoader__.load({
       const connectionOffsets = options === undefined || options === null || options.connectionOffsets === undefined
         ? {}
         : options.connectionOffsets
+      const labelPlacements = options === undefined || options === null || options.labelPlacements === undefined
+        ? {}
+        : options.labelPlacements
       const names = fsm.states.map(state => state.name)
       if (names.length === 0) {
         return { width: 240, height: 120, nodes: [], edges: [], resetNode: null }
@@ -1702,6 +1780,21 @@ window.__ModuleLoader__.load({
         }
         return candidates
       }
+      const labelPlacementFor = (edge) => labelPlacements[transitionKey(edge.from, edge.to)] || null
+      const placeCustomLabel = (labelPoints, box, placement, numbered) => {
+        if (box === null || placement === null || labelPoints.length === 0) return null
+        const location = pointAtPolylinePercent(labelPoints, placement.percent)
+        if (location === null) return null
+        const offset = numbered ? 0 : (placement.offset || 0)
+        const candidate = {
+          x: location.point.x + location.normal.x * offset,
+          y: location.point.y + location.normal.y * offset,
+        }
+        return {
+          candidate,
+          rect: { x: candidate.x - box.width / 2, y: candidate.y - box.height / 2, width: box.width, height: box.height },
+        }
+      }
       const placeLabel = (candidates, box) => {
         if (box === null || candidates.length === 0) return null
         let best = candidates[0]
@@ -1737,10 +1830,22 @@ window.__ModuleLoader__.load({
           if (box.numbered) candidates.push(arcMid)
           for (const offset of [34, 50, 68]) candidates.push({ x: node.cx, y: node.y - 52 - offset - box.height / 2 + 12 })
         }
-        const placed = placeLabel(candidates, box)
+        const curvePoints = []
+        for (let step = 0; step <= 16; step += 1) {
+          const ratio = step / 16
+          const inverse = 1 - ratio
+          curvePoints.push({
+            x: inverse * inverse * start.x + 2 * inverse * ratio * apex.x + ratio * ratio * end.x,
+            y: inverse * inverse * start.y + 2 * inverse * ratio * apex.y + ratio * ratio * end.y,
+          })
+        }
+        const customPlacement = labelPlacementFor(edge)
+        const placed = customPlacement !== null
+          ? placeCustomLabel(curvePoints, box, customPlacement, box !== null && box.numbered)
+          : placeLabel(candidates, box)
         if (placed !== null) { labelRects.push(placed.rect); insertOccupied(placed.rect) }
         annotated.push({
-          edge, kind: 'self', points: [start, apex, end],
+          edge, kind: 'self', points: [start, apex, end], labelPoints: curvePoints,
           arrowDirection: { x: end.x - apex.x, y: end.y - apex.y },
           box, labelCenter: placed === null ? null : placed.candidate,
         })
@@ -1779,10 +1884,13 @@ window.__ModuleLoader__.load({
               }
             }
           }
-          const placed = placeLabel(candidates, box)
+          const customPlacement = labelPlacementFor(edge)
+          const placed = customPlacement !== null
+            ? placeCustomLabel(points, box, customPlacement, box !== null && box.numbered)
+            : placeLabel(candidates, box)
           if (placed !== null) { labelRects.push(placed.rect); insertOccupied(placed.rect) }
           annotated.push({
-            edge, kind: 'long', points,
+            edge, kind: 'long', points, labelPoints: points,
             arrowDirection: { x: end.x - points[points.length - 2].x, y: 0 },
             box, labelCenter: placed === null ? null : placed.candidate,
           })
@@ -1813,10 +1921,13 @@ window.__ModuleLoader__.load({
               }
             }
           }
-          const placed = placeLabel(candidates, box)
+          const customPlacement = labelPlacementFor(edge)
+          const placed = customPlacement !== null
+            ? placeCustomLabel(points, box, customPlacement, box !== null && box.numbered)
+            : placeLabel(candidates, box)
           if (placed !== null) { labelRects.push(placed.rect); insertOccupied(placed.rect) }
           annotated.push({
-            edge, kind: 'back', points,
+            edge, kind: 'back', points, labelPoints: points,
             arrowDirection: { x: end.x - points[points.length - 2].x, y: 0 },
             box, labelCenter: placed === null ? null : placed.candidate,
           })
@@ -1833,10 +1944,13 @@ window.__ModuleLoader__.load({
           : boxAnchor(target, route[route.length - 2])
         const points = shiftMiddle([start].concat(route.slice(1, -1)).concat([end]), routeOffsetFor(edge))
         const candidates = candidatesAlong(points, box, box !== null && box.numbered)
-        const placed = placeLabel(candidates, box)
+        const customPlacement = labelPlacementFor(edge)
+        const placed = customPlacement !== null
+          ? placeCustomLabel(points, box, customPlacement, box !== null && box.numbered)
+          : placeLabel(candidates, box)
         if (placed !== null) { labelRects.push(placed.rect); insertOccupied(placed.rect) }
         annotated.push({
-          edge, kind: 'forward', points,
+          edge, kind: 'forward', points, labelPoints: points,
           arrowDirection: {
             x: end.x - points[points.length - 2].x,
             y: end.y - points[points.length - 2].y,
@@ -1920,11 +2034,20 @@ window.__ModuleLoader__.load({
           self: item.kind === 'self',
           colorIndex: item.colorIndex,
           labels: item.edge.labels,
+          points: (item.labelPoints || item.points).map(point => ({ x: point.x + shiftX, y: point.y + shiftY })),
           path,
           arrow: arrowHead(tip, item.arrowDirection.x, item.arrowDirection.y),
           label: item.box === null ? '' : item.box.text,
           startPoint: { x: points[0].x, y: points[0].y },
           endPoint: { x: points[points.length - 1].x, y: points[points.length - 1].y },
+          labelRect: item.box === null || item.labelCenter === null
+            ? null
+            : {
+              x: item.labelCenter.x + shiftX - item.box.width / 2,
+              y: item.labelCenter.y + shiftY - item.box.height / 2,
+              width: item.box.width,
+              height: item.box.height,
+            },
           labelX: item.labelCenter === null ? tip.x : item.labelCenter.x + shiftX,
           labelY: item.labelCenter === null ? tip.y : item.labelCenter.y + shiftY,
           title: item.edge.from + ' → ' + item.edge.to
@@ -2198,7 +2321,7 @@ window.__ModuleLoader__.load({
       download: 'Download SVG',
       table: 'State table',
       hideTable: 'Hide table',
-      selectHint: 'Click a state to highlight it; drag a box to move it; click an edge to switch its label; drag an edge to bend its route; drag an edge endpoint to move its connection point.',
+      selectHint: 'Click a state to highlight it; drag a box to move it; click an edge to switch its label; drag an edge to bend its route; drag an edge endpoint to move its connection point; drag the label itself to slide it along the edge.',
       warning: 'Warning',
       noCode: 'Paste Verilog code to see its state machine.',
       hintNoCase: 'Module {module} has state register {state}, but no case-based FSM was found (only case style is supported).',
@@ -2285,7 +2408,7 @@ window.__ModuleLoader__.load({
       download: '下载 SVG',
       table: '状态表',
       hideTable: '收起状态表',
-      selectHint: '点击状态高亮；拖动状态框移动位置；点击连线切换编号/文字；拖动连线弯折走线；拖动线端点调整连接点。',
+      selectHint: '点击状态高亮；拖动状态框移动位置；点击连线切换编号/文字；拖动连线弯折走线；拖动线端点调整连接点；拖动标签可沿连线滑动。',
       warning: '警告',
       noCode: '粘贴 Verilog 代码后即可看到状态机图。',
       hintNoCase: '模块 {module} 检测到状态寄存器 {state}，但没有找到 case 状态机（当前仅支持 case 写法）。',
@@ -3084,6 +3207,21 @@ body[data-ds-dark-theme] .vfsm-page {
       return offsets
     }
 
+    /** Manual label positions for one FSM, keyed by transitionKey. */
+    function labelPlacementMap(fsm, overrides) {
+      const placements = {}
+      for (const transition of fsm.transitions) {
+        const value = overrides[fsm.id + '\u0000' + transitionKey(transition.from, transition.to)]
+        if (value === undefined || value === null) continue
+        if (typeof value.percent !== 'number') continue
+        placements[transitionKey(transition.from, transition.to)] = {
+          percent: value.percent,
+          offset: value.offset || 0,
+        }
+      }
+      return placements
+    }
+
     /** Legend rows for the conditions whose edges currently show numbers. */
     function legendForEdgeModes(fsm, numbering, modes) {
       const used = new Set()
@@ -3134,6 +3272,7 @@ body[data-ds-dark-theme] .vfsm-page {
       const [nodeOffsets, setNodeOffsets] = useState(() => sessionState.nodeOffsets)
       const [nodeHistory, setNodeHistory] = useState(() => sessionState.nodeHistory)
       const [connectionOffsets, setConnectionOffsets] = useState(() => sessionState.connectionOffsets)
+      const [labelPlacements, setLabelPlacements] = useState(() => sessionState.labelPlacements)
       const [selected, setSelected] = useState(null)
       const [zoom, setZoom] = useState(1)
       const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -3189,13 +3328,18 @@ body[data-ds-dark-theme] .vfsm-page {
         () => (current === null ? {} : connectionOffsetMap(current, connectionOffsets)),
         [current, connectionOffsets],
       )
+      const currentLabelPlacements = useMemo(
+        () => (current === null ? {} : labelPlacementMap(current, labelPlacements)),
+        [current, labelPlacements],
+      )
       const diagram = useMemo(() => (current === null ? null : layoutFsm(current, {
         labelModes: currentEdgeModes,
         numberMap: numberingInfo.numberMap,
         routeOffsets: currentRouteOffsets,
         nodeOffsets: currentNodeOffsets,
         connectionOffsets: currentConnections,
-      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets, currentNodeOffsets, currentConnections])
+        labelPlacements: currentLabelPlacements,
+      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets, currentNodeOffsets, currentConnections, currentLabelPlacements])
       const svg = useMemo(
         () => (diagram === null ? '' : svgDocument(diagram, {
           colors: CSS_COLORS,
@@ -3221,6 +3365,7 @@ body[data-ds-dark-theme] .vfsm-page {
             routeOffsets: offsets,
             nodeOffsets: nodeOffsetMap(fsm, nodeOffsets),
             connectionOffsets: connectionOffsetMap(fsm, connectionOffsets),
+            labelPlacements: labelPlacementMap(fsm, labelPlacements),
           })
           return {
             fsm,
@@ -3237,7 +3382,7 @@ body[data-ds-dark-theme] .vfsm-page {
             }),
           }
         })
-      }, [allView, fsms, numbering, edgeModes, routeOffsets, nodeOffsets, connectionOffsets, t])
+      }, [allView, fsms, numbering, edgeModes, routeOffsets, nodeOffsets, connectionOffsets, labelPlacements, t])
 
       const fit = useCallback(() => {
         const element = viewport.current
@@ -3521,6 +3666,29 @@ body[data-ds-dark-theme] .vfsm-page {
           if (edge !== null && current !== null) {
             const point = graphPoint(event.clientX, event.clientY)
             const threshold = 18 / Math.max(0.2, zoom)
+            if (point !== null && edge.labelRect !== null && edge.labelRect !== undefined
+              && point.x >= edge.labelRect.x && point.x <= edge.labelRect.x + edge.labelRect.width
+              && point.y >= edge.labelRect.y && point.y <= edge.labelRect.y + edge.labelRect.height) {
+              const projection = projectOnPolyline(edge.points, { x: edge.labelX, y: edge.labelY })
+              drag.current = {
+                kind: 'label',
+                fsmId: current.id,
+                from: edge.from,
+                to: edge.to,
+                x: event.clientX,
+                y: event.clientY,
+                baseOffset: projection === null ? 0 : projection.signedOffset,
+                moved: false,
+              }
+              started = true
+            }
+          }
+        }
+        if (!started) {
+          const edge = edgeAtPoint(event.clientX, event.clientY)
+          if (edge !== null && current !== null) {
+            const point = graphPoint(event.clientX, event.clientY)
+            const threshold = 18 / Math.max(0.2, zoom)
             let attachSide = null
             if (point !== null && !edge.self && edge.startPoint !== undefined && edge.endPoint !== undefined) {
               const fromDistance = Math.hypot(point.x - edge.startPoint.x, point.y - edge.startPoint.y)
@@ -3580,6 +3748,23 @@ body[data-ds-dark-theme] .vfsm-page {
           sessionState.nodeOffsets = next
           return
         }
+        if (state.kind === 'label') {
+          if (!state.moved) return
+          const point = graphPoint(event.clientX, event.clientY)
+          if (point === null) return
+          const edge = diagram === null ? undefined : diagram.edges.find(candidate => candidate.from === state.from && candidate.to === state.to)
+          if (edge === undefined || edge.points === undefined) return
+          const projection = projectOnPolyline(edge.points, point)
+          if (projection === null) return
+          const key = routeKeyFor(state.fsmId, state.from, state.to)
+          const next = {
+            ...labelPlacements,
+            [key]: { percent: projection.percent, offset: state.baseOffset },
+          }
+          setLabelPlacements(next)
+          sessionState.labelPlacements = next
+          return
+        }
         if (state.kind === 'attach') {
           if (!state.moved) return
           const point = graphPoint(event.clientX, event.clientY)
@@ -3635,6 +3820,10 @@ body[data-ds-dark-theme] .vfsm-page {
               return next
             })
           }
+          return
+        }
+        if (state.kind === 'label') {
+          if (!state.moved) toggleEdgeLabel(state.fsmId, state.from, state.to)
           return
         }
         if (state.kind === 'attach') {
@@ -3764,6 +3953,18 @@ body[data-ds-dark-theme] .vfsm-page {
         }
         setRouteOffsets(next)
         sessionState.routeOffsets = next
+        const connections = {}
+        for (const [key, value] of Object.entries(connectionOffsets)) {
+          if (!key.startsWith(prefix)) connections[key] = value
+        }
+        setConnectionOffsets(connections)
+        sessionState.connectionOffsets = connections
+        const placements = {}
+        for (const [key, value] of Object.entries(labelPlacements)) {
+          if (!key.startsWith(prefix)) placements[key] = value
+        }
+        setLabelPlacements(placements)
+        sessionState.labelPlacements = placements
         const history = routeHistory.filter(entry => entry.fsmId !== current.id)
         setRouteHistory(history)
         sessionState.routeHistory = history
@@ -4076,7 +4277,9 @@ body[data-ds-dark-theme] .vfsm-page {
           h('button', {
             type: 'button',
             className: 'vfsm-btn vfsm-btn-sm',
-            disabled: current === null || !Object.keys(routeOffsets).some(key => key.startsWith(current.id + '\u0000')),
+            disabled: current === null
+              || ![routeOffsets, connectionOffsets, labelPlacements]
+                .some(store => Object.keys(store).some(key => key.startsWith(current.id + '\u0000'))),
             onClick: resetRouteOffsets,
           }, t('resetRoutes')),
           h('button', {
@@ -4224,6 +4427,7 @@ body[data-ds-dark-theme] .vfsm-page {
       nodeOffsets: {},
       nodeHistory: [],
       connectionOffsets: {},
+      labelPlacements: {},
       showVerilog: true,
       table: createDefaultTable(),
     }

@@ -332,6 +332,36 @@ assert.ok(startAfter.x >= left - 6 && startAfter.x <= right + 6
 console.log('connection point drag: OK')
 
 // ---------------------------------------------------------------------------
+// Dragging a label slides it along its edge; reset restores the auto position
+// ---------------------------------------------------------------------------
+click(toolbarButton('resetRoutes'))
+const labelRectAttrs = () => {
+  const rect = findStartEdge().querySelector('.vfsm-label-rect')
+  return {
+    x: Number(rect.getAttribute('x')),
+    y: Number(rect.getAttribute('y')),
+    width: Number(rect.getAttribute('width')),
+    height: Number(rect.getAttribute('height')),
+  }
+}
+const labelBefore = labelRectAttrs()
+hit = findStartEdge().querySelector('.vfsm-label-rect')
+const labelCenter = { x: labelBefore.x + labelBefore.width / 2, y: labelBefore.y + labelBefore.height / 2 }
+pointer('pointerdown', q('.vfsm-canvas'), labelCenter)
+pointer('pointermove', q('.vfsm-canvas'), { x: labelCenter.x + 24, y: labelCenter.y + 50 })
+pointer('pointerup', q('.vfsm-canvas'), { x: labelCenter.x + 24, y: labelCenter.y + 50 })
+const labelAfter = labelRectAttrs()
+assert.ok(Math.abs(labelAfter.y - labelBefore.y) > 1 || Math.abs(labelAfter.x - labelBefore.x) > 1,
+  'dragging a label did not move it along the edge')
+assert.ok(findStartEdge().textContent.includes('start'), 'label drag must not toggle the label style')
+assert.equal(toolbarButton('resetRoutes').disabled, false, 'label edits should enable reset')
+click(toolbarButton('resetRoutes'))
+const labelReset = labelRectAttrs()
+assert.ok(Math.abs(labelReset.x - labelBefore.x) < 0.6 && Math.abs(labelReset.y - labelBefore.y) < 0.6,
+  'reset did not restore the automatic label position')
+console.log('label position drag: OK')
+
+// ---------------------------------------------------------------------------
 // Fullscreen toggle keeps the diagram usable and Escape exits the overlay
 // ---------------------------------------------------------------------------
 click(toolbarButton('fullscreen'))
