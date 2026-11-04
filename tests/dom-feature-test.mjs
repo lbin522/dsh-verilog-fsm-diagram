@@ -238,6 +238,34 @@ assert.equal(dragLine().getAttribute('d'), pathBefore, 'reset edge routes did no
 console.log('edge route drag interaction: OK')
 
 // ---------------------------------------------------------------------------
+// Undo restores only the most recently dragged edge
+// ---------------------------------------------------------------------------
+const edgeGroups = () => qa('.vfsm-edge')
+const edgeLineAt = (index) => {
+  const group = edgeGroups()[index]
+  return group === undefined ? null : group.querySelector('.vfsm-edge-line')
+}
+const pathsBeforeUndo = [edgeLineAt(0).getAttribute('d'), edgeLineAt(1).getAttribute('d')]
+hit = edgeGroups()[0]
+pointer('pointerdown', q('.vfsm-canvas'), { x: 60, y: 60 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 120, y: 110 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 120, y: 110 })
+const pathAfterFirst = edgeLineAt(0).getAttribute('d')
+assert.notEqual(pathAfterFirst, pathsBeforeUndo[0])
+hit = edgeGroups()[1]
+pointer('pointerdown', q('.vfsm-canvas'), { x: 70, y: 70 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 30, y: 100 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 30, y: 100 })
+assert.notEqual(edgeLineAt(1).getAttribute('d'), pathsBeforeUndo[1])
+click(toolbarButton('undoRoute'))
+assert.equal(edgeLineAt(1).getAttribute('d'), pathsBeforeUndo[1], 'undo did not restore the last edge')
+assert.equal(edgeLineAt(0).getAttribute('d'), pathAfterFirst, 'undo restored an older edge as well')
+click(toolbarButton('undoRoute'))
+assert.equal(edgeLineAt(0).getAttribute('d'), pathsBeforeUndo[0], 'second undo did not restore the first edge')
+assert.equal(toolbarButton('undoRoute').disabled, true, 'undo should be disabled after all edits are undone')
+console.log('undo last edge interaction: OK')
+
+// ---------------------------------------------------------------------------
 // Fullscreen toggle keeps the diagram usable and Escape exits the overlay
 // ---------------------------------------------------------------------------
 click(toolbarButton('fullscreen'))

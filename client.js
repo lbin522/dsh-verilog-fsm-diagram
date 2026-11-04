@@ -2188,6 +2188,7 @@ window.__ModuleLoader__.load({
       labelNumber: 'Condition numbers',
       fullscreen: 'Fullscreen',
       resetRoutes: 'Reset edge routes',
+      undoRoute: 'Undo last edge',
       exitFullscreen: 'Exit fullscreen',
       legendTitle: 'Conditions',
       viewAll: 'All diagrams',
@@ -2273,6 +2274,7 @@ window.__ModuleLoader__.load({
       labelNumber: '条件编号',
       fullscreen: '全屏',
       resetRoutes: '重置连线',
+      undoRoute: '撤销上一条连线',
       exitFullscreen: '退出全屏',
       legendTitle: '跳转条件',
       viewAll: '全部图',
@@ -3049,6 +3051,7 @@ body[data-ds-dark-theme] .vfsm-page {
       const [numbering, setNumbering] = useState(sessionState.numbering)
       const [edgeModes, setEdgeModes] = useState(() => sessionState.edgeModes)
       const [routeOffsets, setRouteOffsets] = useState(() => sessionState.routeOffsets)
+      const [routeHistory, setRouteHistory] = useState(() => sessionState.routeHistory)
       const [selected, setSelected] = useState(null)
       const [zoom, setZoom] = useState(1)
       const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -3389,6 +3392,8 @@ body[data-ds-dark-theme] .vfsm-page {
             y: event.clientY,
             baseX: existing === undefined ? 0 : existing.x,
             baseY: existing === undefined ? 0 : existing.y,
+            hadOffset: existing !== undefined,
+            next: null,
             moved: false,
           }
         } else {
@@ -3406,10 +3411,9 @@ body[data-ds-dark-theme] .vfsm-page {
         if (state.kind === 'edge') {
           if (!state.moved) return
           const key = routeKeyFor(state.fsmId, state.from, state.to)
-          const next = {
-            ...routeOffsets,
-            [key]: { x: state.baseX + dx / zoom, y: state.baseY + dy / zoom },
-          }
+          const offset = { x: state.baseX + dx / zoom, y: state.baseY + dy / zoom }
+          state.next = offset
+          const next = { ...routeOffsets, [key]: offset }
           setRouteOffsets(next)
           sessionState.routeOffsets = next
           return
@@ -3426,7 +3430,25 @@ body[data-ds-dark-theme] .vfsm-page {
         drag.current = null
         if (state === null) return
         if (state.kind === 'edge') {
-          if (!state.moved) toggleEdgeLabel(state.fsmId, state.from, state.to)
+          if (!state.moved) {
+            toggleEdgeLabel(state.fsmId, state.from, state.to)
+            return
+          }
+          if (state.next !== null
+            && (state.next.x !== state.baseX || state.next.y !== state.baseY)) {
+            const entry = {
+              fsmId: state.fsmId,
+              from: state.from,
+              to: state.to,
+              previous: state.hadOffset ? { x: state.baseX, y: state.baseY } : null,
+              next: { x: state.next.x, y: state.next.y },
+            }
+            setRouteHistory((previous) => {
+              const next = previous.concat([entry])
+              sessionState.routeHistory = next
+              return next
+            })
+          }
           return
         }
         if (state.moved) return
@@ -3530,6 +3552,28 @@ body[data-ds-dark-theme] .vfsm-page {
         }
         setRouteOffsets(next)
         sessionState.routeOffsets = next
+        const history = routeHistory.filter(entry => entry.fsmId !== current.id)
+        setRouteHistory(history)
+        sessionState.routeHistory = history
+      }
+
+      const undoLastRoute = () => {
+        if (current === null) return
+        let index = -1
+        for (let position = routeHistory.length - 1; position >= 0; position -= 1) {
+          if (routeHistory[position].fsmId === current.id) { index = position; break }
+        }
+        if (index < 0) return
+        const entry = routeHistory[index]
+        const key = routeKeyFor(entry.fsmId, entry.from, entry.to)
+        const next = { ...routeOffsets }
+        if (entry.previous === null) delete next[key]
+        else next[key] = { x: entry.previous.x, y: entry.previous.y }
+        setRouteOffsets(next)
+        sessionState.routeOffsets = next
+        const history = routeHistory.filter((_, position) => position !== index)
+        setRouteHistory(history)
+        sessionState.routeHistory = history
       }
 
       const onMiniCanvasClick = (card, event) => {
@@ -3787,6 +3831,13 @@ body[data-ds-dark-theme] .vfsm-page {
           h('button', {
             type: 'button',
             className: 'vfsm-btn vfsm-btn-sm',
+            disabled: current === null
+              || !routeHistory.some(entry => entry.fsmId === current.id),
+            onClick: undoLastRoute,
+          }, t('undoRoute')),
+          h('button', {
+            type: 'button',
+            className: 'vfsm-btn vfsm-btn-sm',
             disabled: current === null || !Object.keys(routeOffsets).some(key => key.startsWith(current.id + '\u0000')),
             onClick: resetRouteOffsets,
           }, t('resetRoutes')),
@@ -3931,6 +3982,7 @@ body[data-ds-dark-theme] .vfsm-page {
       numbering: false,
       edgeModes: {},
       routeOffsets: {},
+      routeHistory: [],
       showVerilog: true,
       table: createDefaultTable(),
     }
