@@ -1,6 +1,6 @@
 {
   "name": "@local/verilog-fsm-diagram",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Convert Verilog FSMs into interactive state diagrams, switch transition labels between text and per-edge numbers, and generate synthesizable Verilog from editable transition tables.",
   "type": "module",
@@ -15,7 +15,9 @@
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "cli.mjs",
+    "README.md"
   ],
   "dsh": {
     "bundle": {
@@ -29,5 +31,8 @@
         "@deepseek-ai/dsh-client-ui-layout"
       ]
     }
+  },
+  "bin": {
+    "verilog-fsm": "./cli.mjs"
   }
 }

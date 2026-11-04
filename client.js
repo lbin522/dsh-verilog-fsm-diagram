@@ -1329,6 +1329,9 @@ window.__ModuleLoader__.load({
       const numberMap = options === undefined || options === null || options.numberMap === undefined
         ? {}
         : options.numberMap
+      const routeOffsets = options === undefined || options === null || options.routeOffsets === undefined
+        ? {}
+        : options.routeOffsets
       const names = fsm.states.map(state => state.name)
       if (names.length === 0) {
         return { width: 240, height: 120, nodes: [], edges: [], resetNode: null }
@@ -1584,6 +1587,25 @@ window.__ModuleLoader__.load({
       let backSequence = 0
 
       const numberedEdge = (edge) => labelModes[transitionKey(edge.from, edge.to)] === 'number'
+      const routeOffsetFor = (edge) => {
+        const value = routeOffsets[transitionKey(edge.from, edge.to)]
+        if (value === undefined || value === null) return null
+        if ((value.x === 0 || value.x === undefined) && (value.y === 0 || value.y === undefined)) return null
+        return value
+      }
+      const shiftMiddle = (points, offset) => {
+        if (offset === null) return points
+        if (points.length === 2) {
+          return [
+            points[0],
+            { x: (points[0].x + points[1].x) / 2 + offset.x, y: (points[0].y + points[1].y) / 2 + offset.y },
+            points[1],
+          ]
+        }
+        return points.map((point, index) => (index === 0 || index === points.length - 1
+          ? point
+          : { x: point.x + offset.x, y: point.y + offset.y }))
+      }
       const labelBox = (edge) => {
         const text = edge.labels.length === 0 ? '' : edge.labels.join(' / ')
         if (text === '') return null
@@ -1668,7 +1690,10 @@ window.__ModuleLoader__.load({
         const node = nodes.get(edge.from)
         const start = { x: node.cx - node.width * 0.24, y: node.y }
         const end = { x: node.cx + node.width * 0.24, y: node.y }
-        const apex = { x: node.cx, y: node.y - 52 }
+        const offset = routeOffsetFor(edge)
+        const apex = offset === null
+          ? { x: node.cx, y: node.y - 52 }
+          : { x: node.cx + offset.x, y: node.y - 52 + offset.y }
         const arcMid = {
           x: 0.25 * start.x + 0.5 * apex.x + 0.25 * end.x,
           y: 0.25 * start.y + 0.5 * apex.y + 0.25 * end.y,
@@ -1704,14 +1729,15 @@ window.__ModuleLoader__.load({
             : minNodeLeft - 40 - backSequence * 15
           const start = { x: sideRight ? source.x + source.width : source.x, y: source.cy }
           const end = { x: sideRight ? target.x + target.width : target.x, y: target.cy }
-          const points = [start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end]
+          const points = shiftMiddle([start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end], routeOffsetFor(edge))
+          const channelX = points.length > 2 ? points[1].x : sideX
           const candidates = []
           if (box !== null) {
             for (const fraction of [0.5, 0.32, 0.68, 0.2, 0.8]) {
               const y = source.cy + (target.cy - source.cy) * fraction
-              if (box.numbered) candidates.push({ x: sideX, y })
+              if (box.numbered) candidates.push({ x: channelX, y })
               for (const outward of [18, 36, 56]) {
-                candidates.push({ x: sideX + (sideRight ? box.width / 2 + outward : -box.width / 2 - outward), y })
+                candidates.push({ x: channelX + (sideRight ? box.width / 2 + outward : -box.width / 2 - outward), y })
               }
             }
           }
@@ -1732,14 +1758,15 @@ window.__ModuleLoader__.load({
             : minNodeLeft - 44 - backSequence * 16
           const start = { x: sideRight ? source.x + source.width : source.x, y: source.cy }
           const end = { x: sideRight ? target.x + target.width : target.x, y: target.cy }
-          const points = [start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end]
+          const points = shiftMiddle([start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end], routeOffsetFor(edge))
+          const channelX = points.length > 2 ? points[1].x : sideX
           const candidates = []
           if (box !== null && Math.abs(target.cy - source.cy) > 30) {
             for (const fraction of [0.5, 0.34, 0.66, 0.22, 0.78]) {
               const y = source.cy + (target.cy - source.cy) * fraction
-              if (box.numbered) candidates.push({ x: sideX, y })
+              if (box.numbered) candidates.push({ x: channelX, y })
               for (const outward of [20, 38, 58]) {
-                candidates.push({ x: sideX + (sideRight ? box.width / 2 + outward : -box.width / 2 - outward), y })
+                candidates.push({ x: channelX + (sideRight ? box.width / 2 + outward : -box.width / 2 - outward), y })
               }
             }
           }
@@ -1756,7 +1783,7 @@ window.__ModuleLoader__.load({
         const route = chain.map(id => ({ x: nodes.get(id).cx, y: nodes.get(id).cy }))
         const start = boxAnchor(source, route[1])
         const end = boxAnchor(target, route[route.length - 2])
-        const points = [start].concat(route.slice(1, -1)).concat([end])
+        const points = shiftMiddle([start].concat(route.slice(1, -1)).concat([end]), routeOffsetFor(edge))
         const candidates = candidatesAlong(points, box, box !== null && box.numbered)
         const placed = placeLabel(candidates, box)
         if (placed !== null) { labelRects.push(placed.rect); insertOccupied(placed.rect) }
@@ -1976,7 +2003,8 @@ window.__ModuleLoader__.load({
         + '.vfsm-svg .vfsm-node-name{fill:' + colors.text + ';font-size:13px;font-weight:600}'
         + '.vfsm-svg .vfsm-node-enc{fill:' + colors.muted + ';font-size:10px}'
         + '.vfsm-svg .vfsm-edge-line{fill:none;stroke:' + colors.muted + ';stroke-width:1.3;stroke-linecap:round}'
-        + '.vfsm-svg .vfsm-edge{cursor:pointer}'
+        + '.vfsm-svg .vfsm-edge{cursor:grab}'
+        + '.vfsm-svg .vfsm-edge-hit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke}'
         + '.vfsm-svg .vfsm-edge:hover .vfsm-edge-line{stroke:' + colors.accent + ';stroke-width:2}'
         + '.vfsm-svg .vfsm-edge:hover .vfsm-arrow{fill:' + colors.accent + '}'
         + '.vfsm-svg .vfsm-edge.is-related .vfsm-edge-line{stroke:' + colors.accent + ';stroke-width:2}'
@@ -2015,6 +2043,7 @@ window.__ModuleLoader__.load({
         const displayLines = displayText === '' ? [] : capLabelLines(wrapLabel(displayText, mode === 'number' ? 12 : 26), 5)
         lineParts.push('<g class="vfsm-edge' + (related ? ' is-related' : '')
           + '" data-edge="' + edgeIndex + '">')
+        lineParts.push('<path class="vfsm-edge-hit" d="' + edge.path + '"/>')
         lineParts.push('<path class="vfsm-edge-line" style="stroke:' + edgeColor + '" d="' + edge.path + '"/>')
         lineParts.push('<path class="vfsm-arrow" style="fill:' + edgeColor + '" d="' + edge.arrow
           + '"><title>' + escapeXml(edge.title) + '</title></path>')
@@ -2119,7 +2148,7 @@ window.__ModuleLoader__.load({
       download: 'Download SVG',
       table: 'State table',
       hideTable: 'Hide table',
-      selectHint: 'Click a state to highlight its transitions; click an edge to switch its label between text and numbers.',
+      selectHint: 'Click a state to highlight its transitions; click an edge to switch its label; drag an edge to bend its route.',
       warning: 'Warning',
       noCode: 'Paste Verilog code to see its state machine.',
       hintNoCase: 'Module {module} has state register {state}, but no case-based FSM was found (only case style is supported).',
@@ -2158,6 +2187,7 @@ window.__ModuleLoader__.load({
       tableEmpty: 'Add at least one transition to generate Verilog.',
       labelNumber: 'Condition numbers',
       fullscreen: 'Fullscreen',
+      resetRoutes: 'Reset edge routes',
       exitFullscreen: 'Exit fullscreen',
       legendTitle: 'Conditions',
       viewAll: 'All diagrams',
@@ -2203,7 +2233,7 @@ window.__ModuleLoader__.load({
       download: '下载 SVG',
       table: '状态表',
       hideTable: '收起状态表',
-      selectHint: '点击状态节点可高亮相关跳转；点击连线可切换该线的编号/文字标签。',
+      selectHint: '点击状态节点可高亮相关跳转；点击连线切换编号/文字；拖动连线可调整走线。',
       warning: '警告',
       noCode: '粘贴 Verilog 代码后即可看到状态机图。',
       hintNoCase: '模块 {module} 检测到状态寄存器 {state}，但没有找到 case 状态机（当前仅支持 case 写法）。',
@@ -2242,6 +2272,7 @@ window.__ModuleLoader__.load({
       tableEmpty: '至少添加一条跳转才能生成 Verilog。',
       labelNumber: '条件编号',
       fullscreen: '全屏',
+      resetRoutes: '重置连线',
       exitFullscreen: '退出全屏',
       legendTitle: '跳转条件',
       viewAll: '全部图',
@@ -2960,6 +2991,18 @@ body[data-ds-dark-theme] .vfsm-page {
       return modes
     }
 
+    /** Per-edge manual route offsets for one FSM, keyed by transitionKey. */
+    function routeOffsetMap(fsm, overrides) {
+      const offsets = {}
+      for (const transition of fsm.transitions) {
+        const value = overrides[fsm.id + '\u0000' + transitionKey(transition.from, transition.to)]
+        if (value === undefined || value === null) continue
+        if ((value.x === 0 || value.x === undefined) && (value.y === 0 || value.y === undefined)) continue
+        offsets[transitionKey(transition.from, transition.to)] = { x: value.x || 0, y: value.y || 0 }
+      }
+      return offsets
+    }
+
     /** Legend rows for the conditions whose edges currently show numbers. */
     function legendForEdgeModes(fsm, numbering, modes) {
       const used = new Set()
@@ -3005,6 +3048,7 @@ body[data-ds-dark-theme] .vfsm-page {
       const [viewAll, setViewAll] = useState(sessionState.viewAll)
       const [numbering, setNumbering] = useState(sessionState.numbering)
       const [edgeModes, setEdgeModes] = useState(() => sessionState.edgeModes)
+      const [routeOffsets, setRouteOffsets] = useState(() => sessionState.routeOffsets)
       const [selected, setSelected] = useState(null)
       const [zoom, setZoom] = useState(1)
       const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -3048,10 +3092,15 @@ body[data-ds-dark-theme] .vfsm-page {
         () => (current === null ? [] : legendForEdgeModes(current, numberingInfo, currentEdgeModes)),
         [current, numberingInfo, currentEdgeModes],
       )
+      const currentRouteOffsets = useMemo(
+        () => (current === null ? {} : routeOffsetMap(current, routeOffsets)),
+        [current, routeOffsets],
+      )
       const diagram = useMemo(() => (current === null ? null : layoutFsm(current, {
         labelModes: currentEdgeModes,
         numberMap: numberingInfo.numberMap,
-      })), [current, currentEdgeModes, numberingInfo])
+        routeOffsets: currentRouteOffsets,
+      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets])
       const svg = useMemo(
         () => (diagram === null ? '' : svgDocument(diagram, {
           colors: CSS_COLORS,
@@ -3070,7 +3119,8 @@ body[data-ds-dark-theme] .vfsm-page {
         return fsms.map((fsm) => {
           const info = buildConditionNumbering(fsm)
           const modes = edgeModeMap(fsm, numbering, edgeModes)
-          const cardDiagram = layoutFsm(fsm, { labelModes: modes, numberMap: info.numberMap })
+          const offsets = routeOffsetMap(fsm, routeOffsets)
+          const cardDiagram = layoutFsm(fsm, { labelModes: modes, numberMap: info.numberMap, routeOffsets: offsets })
           return {
             fsm,
             diagram: cardDiagram,
@@ -3086,7 +3136,7 @@ body[data-ds-dark-theme] .vfsm-page {
             }),
           }
         })
-      }, [allView, fsms, numbering, edgeModes, t])
+      }, [allView, fsms, numbering, edgeModes, routeOffsets, t])
 
       const fit = useCallback(() => {
         const element = viewport.current
@@ -3310,9 +3360,40 @@ body[data-ds-dark-theme] .vfsm-page {
         setPan({ x: width / 2 - anchorX * nextZoom, y: height / 2 - anchorY * nextZoom })
       }
 
+      const routeKeyFor = (fsmId, from, to) => fsmId + '\u0000' + transitionKey(from, to)
+
+      const edgeAtPoint = (clientX, clientY) => {
+        if (typeof document === 'undefined' || document.elementFromPoint === undefined) return null
+        const element = document.elementFromPoint(clientX, clientY)
+        if (element === null || element === undefined || element.closest === undefined) return null
+        if (element.closest('[data-state]') !== null && element.closest('[data-state]') !== undefined) return null
+        const edgeTarget = element.closest('[data-edge]')
+        if (edgeTarget === null || edgeTarget === undefined || current === null || diagram === null) return null
+        const edgeIndex = Number(edgeTarget.getAttribute('data-edge'))
+        const edge = diagram.edges[edgeIndex]
+        if (edge === undefined) return null
+        return edge
+      }
+
       const onPointerDown = (event) => {
         if (event.button !== 0) return
-        drag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y, moved: false }
+        const edge = edgeAtPoint(event.clientX, event.clientY)
+        if (edge !== null && current !== null) {
+          const existing = routeOffsets[routeKeyFor(current.id, edge.from, edge.to)]
+          drag.current = {
+            kind: 'edge',
+            fsmId: current.id,
+            from: edge.from,
+            to: edge.to,
+            x: event.clientX,
+            y: event.clientY,
+            baseX: existing === undefined ? 0 : existing.x,
+            baseY: existing === undefined ? 0 : existing.y,
+            moved: false,
+          }
+        } else {
+          drag.current = { kind: 'pan', x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y, moved: false }
+        }
         if (event.currentTarget.setPointerCapture !== undefined) event.currentTarget.setPointerCapture(event.pointerId)
       }
 
@@ -3322,6 +3403,17 @@ body[data-ds-dark-theme] .vfsm-page {
         const dx = event.clientX - state.x
         const dy = event.clientY - state.y
         if (Math.abs(dx) + Math.abs(dy) > 3) state.moved = true
+        if (state.kind === 'edge') {
+          if (!state.moved) return
+          const key = routeKeyFor(state.fsmId, state.from, state.to)
+          const next = {
+            ...routeOffsets,
+            [key]: { x: state.baseX + dx / zoom, y: state.baseY + dy / zoom },
+          }
+          setRouteOffsets(next)
+          sessionState.routeOffsets = next
+          return
+        }
         setPan({ x: state.panX + dx, y: state.panY + dy })
       }
 
@@ -3332,7 +3424,12 @@ body[data-ds-dark-theme] .vfsm-page {
       const onPointerUp = (event) => {
         const state = drag.current
         drag.current = null
-        if (state === null || state.moved) return
+        if (state === null) return
+        if (state.kind === 'edge') {
+          if (!state.moved) toggleEdgeLabel(state.fsmId, state.from, state.to)
+          return
+        }
+        if (state.moved) return
         // Pointer capture retargets the event to the canvas, so resolve the
         // glyph under the pointer explicitly before toggling the selection.
         const element = document.elementFromPoint(event.clientX, event.clientY)
@@ -3422,6 +3519,17 @@ body[data-ds-dark-theme] .vfsm-page {
           } catch (error) { /* fall back to an in-app overlay */ }
         }
         setIsFullscreen(true)
+      }
+
+      const resetRouteOffsets = () => {
+        if (current === null) return
+        const prefix = current.id + '\u0000'
+        const next = {}
+        for (const [key, value] of Object.entries(routeOffsets)) {
+          if (!key.startsWith(prefix)) next[key] = value
+        }
+        setRouteOffsets(next)
+        sessionState.routeOffsets = next
       }
 
       const onMiniCanvasClick = (card, event) => {
@@ -3678,6 +3786,12 @@ body[data-ds-dark-theme] .vfsm-page {
             : h('button', { type: 'button', className: 'vfsm-btn vfsm-btn-sm', onClick: toggleTable, disabled: current === null }, showTable ? t('hideTable') : t('table')),
           h('button', {
             type: 'button',
+            className: 'vfsm-btn vfsm-btn-sm',
+            disabled: current === null || !Object.keys(routeOffsets).some(key => key.startsWith(current.id + '\u0000')),
+            onClick: resetRouteOffsets,
+          }, t('resetRoutes')),
+          h('button', {
+            type: 'button',
             className: 'vfsm-btn vfsm-btn-sm' + (isFullscreen ? ' is-on' : ''),
             'aria-pressed': isFullscreen,
             onClick: toggleFullscreen,
@@ -3816,6 +3930,7 @@ body[data-ds-dark-theme] .vfsm-page {
       viewAll: false,
       numbering: false,
       edgeModes: {},
+      routeOffsets: {},
       showVerilog: true,
       table: createDefaultTable(),
     }
@@ -3862,17 +3977,83 @@ body[data-ds-dark-theme] .vfsm-page {
     // Browser plugin registration
     // =====================================================================
 
-    /** Contribute the sidebar entry and the main panel it opens. */
+    /**
+     * `more` folds this panel into the sidebar's "More" menu (the sidebar keeps
+     * only the shipped rows); `row` gives it its own sidebar row again.
+     */
+    const SIDEBAR_FOLD = 'more'
+
+    /** Menu-row styles; rendered inside the menu portal so they travel with the row. */
+    const MORE_ROW_CSS = `
+.vfsm-more-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+  height: 32px; padding: 0 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.vfsm-more-row:hover, .vfsm-more-row:focus-visible { background: var(--dsw-alias-bg-layer-2); outline: none; }
+.vfsm-more-row.is-active { color: var(--dsw-alias-brand-primary); }
+.vfsm-more-icon { display: inline-flex; flex: none; color: var(--dsw-alias-label-secondary); }
+.vfsm-more-row.is-active .vfsm-more-icon { color: var(--dsw-alias-brand-primary); }
+.vfsm-more-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vfsm-more-check { margin-left: auto; flex: none; color: var(--dsw-alias-brand-primary); font-size: 12px; }
+`
+
+    /**
+     * One row of the sidebar's More menu: opens the Verilog FSM main panel.
+     * Registered into `sidebar.panellist.actions`, whose owner passes the menu
+     * dismissal callback and the standard panel-selection hooks.
+     */
+    function FoldedPanelRow(props) {
+      const safe = props === null || props === undefined ? {} : props
+      const t = typeof safe.t === 'function' ? safe.t : key => key
+      const dismiss = typeof safe.onDismiss === 'function' ? safe.onDismiss : () => {}
+      const openPanel = typeof safe.openPanel === 'function' ? safe.openPanel : () => {}
+      let active = false
+      if (typeof safe.usePanelInfo === 'function') {
+        active = safe.usePanelInfo(info => info !== null && info !== undefined && info.activePanelId === PANEL_ID) === true
+      }
+      return h(React.Fragment, null,
+        h('style', null, MORE_ROW_CSS),
+        h('button', {
+          type: 'button',
+          className: 'vfsm-more-row' + (active ? ' is-active' : ''),
+          'aria-current': active ? 'page' : undefined,
+          onClick: () => {
+            dismiss()
+            openPanel()
+          },
+        },
+        h('span', { className: 'vfsm-more-icon', 'aria-hidden': 'true' }, h(PanelGlyph, { size: 16 })),
+        h('span', { className: 'vfsm-more-label' }, t('panel')),
+        active ? h('span', { className: 'vfsm-more-check', 'aria-hidden': 'true' }, '✓') : null))
+    }
+
+    /** Contribute the folded sidebar entry and the main panel it opens. */
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { en: EN, zh: ZH }), 'verilog-fsm: dictionaries')
       const t = ctx.locale.bind(NS)
-      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-        name: 'sidebar.panellist',
-        id: PANEL_ID,
-        order: 12,
-        label: () => t('panel'),
-        locale: NS,
-      }, PanelGlyph))
+      if (SIDEBAR_FOLD === 'row') {
+        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: PANEL_ID,
+          order: 12,
+          label: () => t('panel'),
+          locale: NS,
+        }, PanelGlyph))
+      } else {
+        ctx.slots.inject('sidebar.panellist.actions', () => ctx.slots.register({
+          name: 'sidebar.panellist.actions',
+          id: 'verilog-fsm',
+          order: -11,
+          locale: NS,
+          inject: () => ({
+            openPanel: () => {
+              ctx.layout.selectPanel(PANEL_ID)
+            },
+          }),
+        }, FoldedPanelRow))
+      }
       ctx.slots.inject('main', () => ctx.slots.register({
         name: 'main',
         key: PANEL_ID,
@@ -3881,7 +4062,7 @@ body[data-ds-dark-theme] .vfsm-page {
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'layout'],
       apply,
       __internals: {
         tokenize,
@@ -3895,6 +4076,9 @@ body[data-ds-dark-theme] .vfsm-page {
         sanitizeIdentifier,
         createDefaultTable,
         sessionState,
+        SIDEBAR_FOLD,
+        MORE_ROW_CSS,
+        FoldedPanelRow,
       },
     }
   },

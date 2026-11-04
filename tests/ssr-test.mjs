@@ -17,7 +17,7 @@ const module = captured.factory((spec) => {
 })
 
 assert.equal(typeof module.apply, 'function')
-assert.deepEqual(Array.from(module.inject), ['slots', 'locale'])
+assert.deepEqual(Array.from(module.inject), ['slots', 'locale', 'layout'])
 
 const registrations = []
 const fakeContext = {
@@ -36,12 +36,13 @@ const fakeContext = {
 }
 module.apply(fakeContext)
 const main = registrations.find((entry) => entry.options.name === 'main')
-const sidebar = registrations.find((entry) => entry.options.name === 'sidebar.panellist')
 assert.ok(main !== undefined, 'main slot registration missing')
 assert.equal(main.options.key, 'verilog-fsm')
-assert.ok(sidebar !== undefined, 'sidebar.panellist registration missing')
+const folded = module.__internals.SIDEBAR_FOLD !== 'row'
+const sidebar = registrations.find((entry) => entry.options.name === (folded ? 'sidebar.panellist.actions' : 'sidebar.panellist'))
+assert.ok(sidebar !== undefined, 'sidebar panel registration missing')
 assert.equal(sidebar.options.id, 'verilog-fsm')
-assert.equal(sidebar.options.order, 12)
+if (!folded) assert.equal(sidebar.options.order, 12)
 console.log('registrations: OK')
 
 const element = React.createElement(main.Component, { t: (key) => key })
@@ -55,9 +56,13 @@ assert.ok(!markup.includes('undefined'), 'rendered markup must not contain undef
 assert.ok(!markup.includes('NaN'), 'rendered markup must not contain NaN')
 console.log('SSR render: OK, markup length =', markup.length)
 
-// Sidebar glyph must render at the requested size.
-const glyph = ReactDOMServer.renderToStaticMarkup(React.createElement(sidebar.Component, { size: 16, active: true }))
-assert.ok(glyph.includes('width="16"') && glyph.includes('viewBox="0 0 24 24"'))
+// Sidebar row (folded menu row or the icon row) must render.
+const sidebarProps = folded
+  ? { t: (key) => key, usePanelInfo: () => false, onDismiss: () => {}, openPanel: () => {} }
+  : { size: 16, active: true }
+const glyph = ReactDOMServer.renderToStaticMarkup(React.createElement(sidebar.Component, sidebarProps))
+assert.ok(glyph.length > 0)
+assert.ok(folded ? glyph.includes('vfsm-more-row') : (glyph.includes('width="16"') && glyph.includes('viewBox="0 0 24 24"')))
 console.log('sidebar glyph: OK')
 
 // The same component renders the empty state when the source has no FSM.

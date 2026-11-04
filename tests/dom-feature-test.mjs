@@ -80,9 +80,12 @@ const setTextarea = (element, value) => {
 }
 const svgMarkup = () => (q('.vfsm-canvas-inner') === null ? '' : q('.vfsm-canvas-inner').innerHTML)
 const allSvgMarkup = () => qa('.vfsm-mini-canvas').map((element) => element.innerHTML).join('\n')
-const pointer = (type, element) => act(() => {
+const pointer = (type, element, coords) => act(() => {
   element.dispatchEvent(new win.PointerEvent(type, {
-    bubbles: true, cancelable: true, clientX: 10, clientY: 10, pointerId: 1, button: 0,
+    bubbles: true, cancelable: true,
+    clientX: coords === undefined ? 10 : coords.x,
+    clientY: coords === undefined ? 10 : coords.y,
+    pointerId: 1, button: 0,
   }))
 })
 
@@ -211,6 +214,28 @@ assert.ok(findStartEdge().textContent.includes('1'), 'global numbering did not n
 click(toolbarButton('labelNumber'))
 assert.equal(q('.vfsm-legend'), null)
 console.log('edge label toggle interaction: OK')
+
+// ---------------------------------------------------------------------------
+// Dragging an edge bends its route without changing the zoom; reset restores it
+// ---------------------------------------------------------------------------
+const dragEdgeGroup = findStartEdge()
+const dragLine = () => {
+  const group = findStartEdge()
+  return group === undefined ? null : group.querySelector('.vfsm-edge-line')
+}
+assert.ok(dragLine() !== null)
+const pathBefore = dragLine().getAttribute('d')
+const transformBeforeDrag = q('.vfsm-canvas-inner').style.transform
+hit = dragEdgeGroup
+pointer('pointerdown', q('.vfsm-canvas'), { x: 60, y: 120 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 120, y: 190 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 120, y: 190 })
+assert.notEqual(dragLine().getAttribute('d'), pathBefore, 'dragging an edge did not move its route')
+assert.equal(q('.vfsm-canvas-inner').style.transform, transformBeforeDrag, 'edge drag changed the zoom')
+assert.ok(findStartEdge().textContent.includes('start'), 'edge drag must not toggle the label')
+click(toolbarButton('resetRoutes'))
+assert.equal(dragLine().getAttribute('d'), pathBefore, 'reset edge routes did not restore the path')
+console.log('edge route drag interaction: OK')
 
 // ---------------------------------------------------------------------------
 // Fullscreen toggle keeps the diagram usable and Escape exits the overlay
