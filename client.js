@@ -1203,6 +1203,21 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Intersection of a fixed direction ray from the node centre with its box. */
+    function boxAnchorAtAngle(node, angle) {
+      const cx = node.x + node.width / 2
+      const cy = node.y + node.height / 2
+      const dx = Math.cos(angle)
+      const dy = Math.sin(angle)
+      const halfWidth = node.width / 2 + 5
+      const halfHeight = node.height / 2 + 5
+      const scale = Math.min(
+        dx === 0 ? Number.POSITIVE_INFINITY : halfWidth / Math.abs(dx),
+        dy === 0 ? Number.POSITIVE_INFINITY : halfHeight / Math.abs(dy),
+      )
+      return { x: cx + dx * scale, y: cy + dy * scale }
+    }
+
     /** Arrowhead polygon at `tip` pointing along direction (dx, dy). */
     function arrowHead(tip, dx, dy) {
       const length = Math.sqrt(dx * dx + dy * dy) || 1
@@ -1332,6 +1347,12 @@ window.__ModuleLoader__.load({
       const routeOffsets = options === undefined || options === null || options.routeOffsets === undefined
         ? {}
         : options.routeOffsets
+      const nodeOffsets = options === undefined || options === null || options.nodeOffsets === undefined
+        ? {}
+        : options.nodeOffsets
+      const connectionOffsets = options === undefined || options === null || options.connectionOffsets === undefined
+        ? {}
+        : options.connectionOffsets
       const names = fsm.states.map(state => state.name)
       if (names.length === 0) {
         return { width: 240, height: 120, nodes: [], edges: [], resetNode: null }
@@ -1541,6 +1562,17 @@ window.__ModuleLoader__.load({
           node.y = node.cy - node.height / 2
         }
       }
+      // Manual state positions are applied before routing, so every edge end
+      // and label follows the moved box.
+      for (const node of nodes.values()) {
+        if (node.kind !== 'state') continue
+        const offset = nodeOffsets[node.name]
+        if (offset === undefined || offset === null) continue
+        node.cx += offset.x || 0
+        node.cy += offset.y || 0
+        node.x += offset.x || 0
+        node.y += offset.y || 0
+      }
 
       // --- edge geometry --------------------------------------------------
       const realNodes = names.map(name => nodes.get(name))
@@ -1593,6 +1625,7 @@ window.__ModuleLoader__.load({
         if ((value.x === 0 || value.x === undefined) && (value.y === 0 || value.y === undefined)) return null
         return value
       }
+      const connectionOverride = (edge) => connectionOffsets[transitionKey(edge.from, edge.to)] || null
       const shiftMiddle = (points, offset) => {
         if (offset === null) return points
         if (points.length === 2) {
@@ -1727,8 +1760,13 @@ window.__ModuleLoader__.load({
           const sideX = sideRight
             ? maxNodeRight + 40 + backSequence * 15
             : minNodeLeft - 40 - backSequence * 15
-          const start = { x: sideRight ? source.x + source.width : source.x, y: source.cy }
-          const end = { x: sideRight ? target.x + target.width : target.x, y: target.cy }
+          const connection = connectionOverride(edge)
+          const start = connection !== null && connection.fromAngle !== undefined
+            ? boxAnchorAtAngle(source, connection.fromAngle)
+            : { x: sideRight ? source.x + source.width : source.x, y: source.cy }
+          const end = connection !== null && connection.toAngle !== undefined
+            ? boxAnchorAtAngle(target, connection.toAngle)
+            : { x: sideRight ? target.x + target.width : target.x, y: target.cy }
           const points = shiftMiddle([start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end], routeOffsetFor(edge))
           const channelX = points.length > 2 ? points[1].x : sideX
           const candidates = []
@@ -1756,8 +1794,13 @@ window.__ModuleLoader__.load({
           const sideX = sideRight
             ? maxNodeRight + 44 + backSequence * 16
             : minNodeLeft - 44 - backSequence * 16
-          const start = { x: sideRight ? source.x + source.width : source.x, y: source.cy }
-          const end = { x: sideRight ? target.x + target.width : target.x, y: target.cy }
+          const connection = connectionOverride(edge)
+          const start = connection !== null && connection.fromAngle !== undefined
+            ? boxAnchorAtAngle(source, connection.fromAngle)
+            : { x: sideRight ? source.x + source.width : source.x, y: source.cy }
+          const end = connection !== null && connection.toAngle !== undefined
+            ? boxAnchorAtAngle(target, connection.toAngle)
+            : { x: sideRight ? target.x + target.width : target.x, y: target.cy }
           const points = shiftMiddle([start, { x: sideX, y: source.cy }, { x: sideX, y: target.cy }, end], routeOffsetFor(edge))
           const channelX = points.length > 2 ? points[1].x : sideX
           const candidates = []
@@ -1781,8 +1824,13 @@ window.__ModuleLoader__.load({
         }
         const chain = [edge.from].concat(dummyChains.get(edgeIndex) || []).concat([edge.to])
         const route = chain.map(id => ({ x: nodes.get(id).cx, y: nodes.get(id).cy }))
-        const start = boxAnchor(source, route[1])
-        const end = boxAnchor(target, route[route.length - 2])
+        const connection = connectionOverride(edge)
+        const start = connection !== null && connection.fromAngle !== undefined
+          ? boxAnchorAtAngle(source, connection.fromAngle)
+          : boxAnchor(source, route[1])
+        const end = connection !== null && connection.toAngle !== undefined
+          ? boxAnchorAtAngle(target, connection.toAngle)
+          : boxAnchor(target, route[route.length - 2])
         const points = shiftMiddle([start].concat(route.slice(1, -1)).concat([end]), routeOffsetFor(edge))
         const candidates = candidatesAlong(points, box, box !== null && box.numbered)
         const placed = placeLabel(candidates, box)
@@ -1875,6 +1923,8 @@ window.__ModuleLoader__.load({
           path,
           arrow: arrowHead(tip, item.arrowDirection.x, item.arrowDirection.y),
           label: item.box === null ? '' : item.box.text,
+          startPoint: { x: points[0].x, y: points[0].y },
+          endPoint: { x: points[points.length - 1].x, y: points[points.length - 1].y },
           labelX: item.labelCenter === null ? tip.x : item.labelCenter.x + shiftX,
           labelY: item.labelCenter === null ? tip.y : item.labelCenter.y + shiftY,
           title: item.edge.from + ' → ' + item.edge.to
@@ -2148,7 +2198,7 @@ window.__ModuleLoader__.load({
       download: 'Download SVG',
       table: 'State table',
       hideTable: 'Hide table',
-      selectHint: 'Click a state to highlight its transitions; click an edge to switch its label; drag an edge to bend its route.',
+      selectHint: 'Click a state to highlight it; drag a box to move it; click an edge to switch its label; drag an edge to bend its route; drag an edge endpoint to move its connection point.',
       warning: 'Warning',
       noCode: 'Paste Verilog code to see its state machine.',
       hintNoCase: 'Module {module} has state register {state}, but no case-based FSM was found (only case style is supported).',
@@ -2189,6 +2239,7 @@ window.__ModuleLoader__.load({
       fullscreen: 'Fullscreen',
       resetRoutes: 'Reset edge routes',
       undoRoute: 'Undo last edge',
+      undoNode: 'Undo last box',
       exitFullscreen: 'Exit fullscreen',
       legendTitle: 'Conditions',
       viewAll: 'All diagrams',
@@ -2234,7 +2285,7 @@ window.__ModuleLoader__.load({
       download: '下载 SVG',
       table: '状态表',
       hideTable: '收起状态表',
-      selectHint: '点击状态节点可高亮相关跳转；点击连线切换编号/文字；拖动连线可调整走线。',
+      selectHint: '点击状态高亮；拖动状态框移动位置；点击连线切换编号/文字；拖动连线弯折走线；拖动线端点调整连接点。',
       warning: '警告',
       noCode: '粘贴 Verilog 代码后即可看到状态机图。',
       hintNoCase: '模块 {module} 检测到状态寄存器 {state}，但没有找到 case 状态机（当前仅支持 case 写法）。',
@@ -2275,6 +2326,7 @@ window.__ModuleLoader__.load({
       fullscreen: '全屏',
       resetRoutes: '重置连线',
       undoRoute: '撤销上一条连线',
+      undoNode: '撤销上一个框',
       exitFullscreen: '退出全屏',
       legendTitle: '跳转条件',
       viewAll: '全部图',
@@ -3005,6 +3057,33 @@ body[data-ds-dark-theme] .vfsm-page {
       return offsets
     }
 
+    /** Manual node positions for one FSM, keyed by state name. */
+    function nodeOffsetMap(fsm, overrides) {
+      const offsets = {}
+      for (const state of fsm.states) {
+        const value = overrides[fsm.id + '\u0000' + state.name]
+        if (value === undefined || value === null) continue
+        if ((value.x === 0 || value.x === undefined) && (value.y === 0 || value.y === undefined)) continue
+        offsets[state.name] = { x: value.x || 0, y: value.y || 0 }
+      }
+      return offsets
+    }
+
+    /** Manual attachment angles for one FSM, keyed by transitionKey. */
+    function connectionOffsetMap(fsm, overrides) {
+      const offsets = {}
+      for (const transition of fsm.transitions) {
+        const value = overrides[fsm.id + '\u0000' + transitionKey(transition.from, transition.to)]
+        if (value === undefined || value === null) continue
+        const entry = {}
+        if (value.fromAngle !== undefined) entry.fromAngle = value.fromAngle
+        if (value.toAngle !== undefined) entry.toAngle = value.toAngle
+        if (entry.fromAngle === undefined && entry.toAngle === undefined) continue
+        offsets[transitionKey(transition.from, transition.to)] = entry
+      }
+      return offsets
+    }
+
     /** Legend rows for the conditions whose edges currently show numbers. */
     function legendForEdgeModes(fsm, numbering, modes) {
       const used = new Set()
@@ -3052,6 +3131,9 @@ body[data-ds-dark-theme] .vfsm-page {
       const [edgeModes, setEdgeModes] = useState(() => sessionState.edgeModes)
       const [routeOffsets, setRouteOffsets] = useState(() => sessionState.routeOffsets)
       const [routeHistory, setRouteHistory] = useState(() => sessionState.routeHistory)
+      const [nodeOffsets, setNodeOffsets] = useState(() => sessionState.nodeOffsets)
+      const [nodeHistory, setNodeHistory] = useState(() => sessionState.nodeHistory)
+      const [connectionOffsets, setConnectionOffsets] = useState(() => sessionState.connectionOffsets)
       const [selected, setSelected] = useState(null)
       const [zoom, setZoom] = useState(1)
       const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -3099,11 +3181,21 @@ body[data-ds-dark-theme] .vfsm-page {
         () => (current === null ? {} : routeOffsetMap(current, routeOffsets)),
         [current, routeOffsets],
       )
+      const currentNodeOffsets = useMemo(
+        () => (current === null ? {} : nodeOffsetMap(current, nodeOffsets)),
+        [current, nodeOffsets],
+      )
+      const currentConnections = useMemo(
+        () => (current === null ? {} : connectionOffsetMap(current, connectionOffsets)),
+        [current, connectionOffsets],
+      )
       const diagram = useMemo(() => (current === null ? null : layoutFsm(current, {
         labelModes: currentEdgeModes,
         numberMap: numberingInfo.numberMap,
         routeOffsets: currentRouteOffsets,
-      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets])
+        nodeOffsets: currentNodeOffsets,
+        connectionOffsets: currentConnections,
+      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets, currentNodeOffsets, currentConnections])
       const svg = useMemo(
         () => (diagram === null ? '' : svgDocument(diagram, {
           colors: CSS_COLORS,
@@ -3123,7 +3215,13 @@ body[data-ds-dark-theme] .vfsm-page {
           const info = buildConditionNumbering(fsm)
           const modes = edgeModeMap(fsm, numbering, edgeModes)
           const offsets = routeOffsetMap(fsm, routeOffsets)
-          const cardDiagram = layoutFsm(fsm, { labelModes: modes, numberMap: info.numberMap, routeOffsets: offsets })
+          const cardDiagram = layoutFsm(fsm, {
+            labelModes: modes,
+            numberMap: info.numberMap,
+            routeOffsets: offsets,
+            nodeOffsets: nodeOffsetMap(fsm, nodeOffsets),
+            connectionOffsets: connectionOffsetMap(fsm, connectionOffsets),
+          })
           return {
             fsm,
             diagram: cardDiagram,
@@ -3139,7 +3237,7 @@ body[data-ds-dark-theme] .vfsm-page {
             }),
           }
         })
-      }, [allView, fsms, numbering, edgeModes, routeOffsets, t])
+      }, [allView, fsms, numbering, edgeModes, routeOffsets, nodeOffsets, connectionOffsets, t])
 
       const fit = useCallback(() => {
         const element = viewport.current
@@ -3364,6 +3462,21 @@ body[data-ds-dark-theme] .vfsm-page {
       }
 
       const routeKeyFor = (fsmId, from, to) => fsmId + '\u0000' + transitionKey(from, to)
+      const nodeKeyFor = (fsmId, name) => fsmId + '\u0000' + name
+
+      const graphPoint = (clientX, clientY) => {
+        const element = viewport.current
+        if (element === null) return null
+        const rect = element.getBoundingClientRect()
+        return { x: (clientX - rect.left - pan.x) / zoom, y: (clientY - rect.top - pan.y) / zoom }
+      }
+
+      const nodeCenter = (name) => {
+        if (diagram === null) return null
+        const node = diagram.nodes.find(candidate => candidate.name === name)
+        if (node === undefined) return null
+        return { x: node.x + node.width / 2, y: node.y + node.height / 2 }
+      }
 
       const edgeAtPoint = (clientX, clientY) => {
         if (typeof document === 'undefined' || document.elementFromPoint === undefined) return null
@@ -3374,29 +3487,79 @@ body[data-ds-dark-theme] .vfsm-page {
         if (edgeTarget === null || edgeTarget === undefined || current === null || diagram === null) return null
         const edgeIndex = Number(edgeTarget.getAttribute('data-edge'))
         const edge = diagram.edges[edgeIndex]
-        if (edge === undefined) return null
-        return edge
+        return edge === undefined ? null : edge
       }
 
       const onPointerDown = (event) => {
         if (event.button !== 0) return
-        const edge = edgeAtPoint(event.clientX, event.clientY)
-        if (edge !== null && current !== null) {
-          const existing = routeOffsets[routeKeyFor(current.id, edge.from, edge.to)]
-          drag.current = {
-            kind: 'edge',
-            fsmId: current.id,
-            from: edge.from,
-            to: edge.to,
-            x: event.clientX,
-            y: event.clientY,
-            baseX: existing === undefined ? 0 : existing.x,
-            baseY: existing === undefined ? 0 : existing.y,
-            hadOffset: existing !== undefined,
-            next: null,
-            moved: false,
+        let started = false
+        const element = typeof document !== 'undefined' && document.elementFromPoint !== undefined
+          ? document.elementFromPoint(event.clientX, event.clientY)
+          : null
+        if (element !== null && element !== undefined && element.closest !== undefined && current !== null) {
+          const stateTarget = element.closest('[data-state]')
+          if (stateTarget !== null && stateTarget !== undefined) {
+            const name = stateTarget.getAttribute('data-state')
+            const existing = nodeOffsets[nodeKeyFor(current.id, name)]
+            drag.current = {
+              kind: 'node',
+              fsmId: current.id,
+              name,
+              x: event.clientX,
+              y: event.clientY,
+              baseX: existing === undefined ? 0 : existing.x,
+              baseY: existing === undefined ? 0 : existing.y,
+              hadOffset: existing !== undefined,
+              next: null,
+              moved: false,
+            }
+            started = true
           }
-        } else {
+        }
+        if (!started) {
+          const edge = edgeAtPoint(event.clientX, event.clientY)
+          if (edge !== null && current !== null) {
+            const point = graphPoint(event.clientX, event.clientY)
+            const threshold = 18 / Math.max(0.2, zoom)
+            let attachSide = null
+            if (point !== null && !edge.self && edge.startPoint !== undefined && edge.endPoint !== undefined) {
+              const fromDistance = Math.hypot(point.x - edge.startPoint.x, point.y - edge.startPoint.y)
+              const toDistance = Math.hypot(point.x - edge.endPoint.x, point.y - edge.endPoint.y)
+              if (Math.min(fromDistance, toDistance) <= threshold) {
+                attachSide = fromDistance <= toDistance ? 'from' : 'to'
+              }
+            }
+            if (attachSide !== null) {
+              drag.current = {
+                kind: 'attach',
+                fsmId: current.id,
+                from: edge.from,
+                to: edge.to,
+                side: attachSide,
+                x: event.clientX,
+                y: event.clientY,
+                moved: false,
+              }
+            } else {
+              const existing = routeOffsets[routeKeyFor(current.id, edge.from, edge.to)]
+              drag.current = {
+                kind: 'edge',
+                fsmId: current.id,
+                from: edge.from,
+                to: edge.to,
+                x: event.clientX,
+                y: event.clientY,
+                baseX: existing === undefined ? 0 : existing.x,
+                baseY: existing === undefined ? 0 : existing.y,
+                hadOffset: existing !== undefined,
+                next: null,
+                moved: false,
+              }
+            }
+            started = true
+          }
+        }
+        if (!started) {
           drag.current = { kind: 'pan', x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y, moved: false }
         }
         if (event.currentTarget.setPointerCapture !== undefined) event.currentTarget.setPointerCapture(event.pointerId)
@@ -3408,6 +3571,31 @@ body[data-ds-dark-theme] .vfsm-page {
         const dx = event.clientX - state.x
         const dy = event.clientY - state.y
         if (Math.abs(dx) + Math.abs(dy) > 3) state.moved = true
+        if (state.kind === 'node') {
+          if (!state.moved) return
+          const offset = { x: state.baseX + dx / zoom, y: state.baseY + dy / zoom }
+          state.next = offset
+          const next = { ...nodeOffsets, [nodeKeyFor(state.fsmId, state.name)]: offset }
+          setNodeOffsets(next)
+          sessionState.nodeOffsets = next
+          return
+        }
+        if (state.kind === 'attach') {
+          if (!state.moved) return
+          const point = graphPoint(event.clientX, event.clientY)
+          const center = nodeCenter(state.side === 'from' ? state.from : state.to)
+          if (point === null || center === null) return
+          const angle = Math.atan2(point.y - center.y, point.x - center.x)
+          const key = routeKeyFor(state.fsmId, state.from, state.to)
+          const existing = connectionOffsets[key] === undefined ? {} : connectionOffsets[key]
+          const nextEntry = { ...existing }
+          if (state.side === 'from') nextEntry.fromAngle = angle
+          else nextEntry.toAngle = angle
+          const next = { ...connectionOffsets, [key]: nextEntry }
+          setConnectionOffsets(next)
+          sessionState.connectionOffsets = next
+          return
+        }
         if (state.kind === 'edge') {
           if (!state.moved) return
           const key = routeKeyFor(state.fsmId, state.from, state.to)
@@ -3429,6 +3617,30 @@ body[data-ds-dark-theme] .vfsm-page {
         const state = drag.current
         drag.current = null
         if (state === null) return
+        if (state.kind === 'node') {
+          if (!state.moved) {
+            selectState(state.name)
+            return
+          }
+          if (state.next !== null && (state.next.x !== state.baseX || state.next.y !== state.baseY)) {
+            const entry = {
+              fsmId: state.fsmId,
+              name: state.name,
+              previous: state.hadOffset ? { x: state.baseX, y: state.baseY } : null,
+              next: { x: state.next.x, y: state.next.y },
+            }
+            setNodeHistory((previous) => {
+              const next = previous.concat([entry])
+              sessionState.nodeHistory = next
+              return next
+            })
+          }
+          return
+        }
+        if (state.kind === 'attach') {
+          if (!state.moved) toggleEdgeLabel(state.fsmId, state.from, state.to)
+          return
+        }
         if (state.kind === 'edge') {
           if (!state.moved) {
             toggleEdgeLabel(state.fsmId, state.from, state.to)
@@ -3462,7 +3674,7 @@ body[data-ds-dark-theme] .vfsm-page {
         const stateTarget = element.closest('[data-state]')
         if (stateTarget !== null && stateTarget !== undefined) {
           const name = stateTarget.getAttribute('data-state')
-          setSelected(previous => (previous === name ? null : name))
+          selectState(name)
           return
         }
         const edgeTarget = element.closest('[data-edge]')
@@ -3574,6 +3786,25 @@ body[data-ds-dark-theme] .vfsm-page {
         const history = routeHistory.filter((_, position) => position !== index)
         setRouteHistory(history)
         sessionState.routeHistory = history
+      }
+
+      const undoLastNode = () => {
+        if (current === null) return
+        let index = -1
+        for (let position = nodeHistory.length - 1; position >= 0; position -= 1) {
+          if (nodeHistory[position].fsmId === current.id) { index = position; break }
+        }
+        if (index < 0) return
+        const entry = nodeHistory[index]
+        const key = nodeKeyFor(entry.fsmId, entry.name)
+        const next = { ...nodeOffsets }
+        if (entry.previous === null) delete next[key]
+        else next[key] = { x: entry.previous.x, y: entry.previous.y }
+        setNodeOffsets(next)
+        sessionState.nodeOffsets = next
+        const history = nodeHistory.filter((_, position) => position !== index)
+        setNodeHistory(history)
+        sessionState.nodeHistory = history
       }
 
       const onMiniCanvasClick = (card, event) => {
@@ -3832,6 +4063,13 @@ body[data-ds-dark-theme] .vfsm-page {
             type: 'button',
             className: 'vfsm-btn vfsm-btn-sm',
             disabled: current === null
+              || !nodeHistory.some(entry => entry.fsmId === current.id),
+            onClick: undoLastNode,
+          }, t('undoNode')),
+          h('button', {
+            type: 'button',
+            className: 'vfsm-btn vfsm-btn-sm',
+            disabled: current === null
               || !routeHistory.some(entry => entry.fsmId === current.id),
             onClick: undoLastRoute,
           }, t('undoRoute')),
@@ -3983,6 +4221,9 @@ body[data-ds-dark-theme] .vfsm-page {
       edgeModes: {},
       routeOffsets: {},
       routeHistory: [],
+      nodeOffsets: {},
+      nodeHistory: [],
+      connectionOffsets: {},
       showVerilog: true,
       table: createDefaultTable(),
     }

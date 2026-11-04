@@ -266,6 +266,72 @@ assert.equal(toolbarButton('undoRoute').disabled, true, 'undo should be disabled
 console.log('undo last edge interaction: OK')
 
 // ---------------------------------------------------------------------------
+// Dragging a state box moves it, and undo restores only the last moved box
+// ---------------------------------------------------------------------------
+const nodeGroup = (name) => q('[data-state="' + name + '"]')
+const nodeRect = (name) => {
+  const rect = nodeGroup(name).querySelector('.vfsm-node-rect')
+  return {
+    x: Number(rect.getAttribute('x')),
+    y: Number(rect.getAttribute('y')),
+    width: Number(rect.getAttribute('width')),
+    height: Number(rect.getAttribute('height')),
+  }
+}
+const idleRectBefore = nodeRect('IDLE')
+hit = nodeGroup('IDLE')
+pointer('pointerdown', q('.vfsm-canvas'), { x: 50, y: 50 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 110, y: 90 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 110, y: 90 })
+assert.ok(nodeRect('IDLE').x !== idleRectBefore.x || nodeRect('IDLE').y !== idleRectBefore.y,
+  'dragging a state box did not move it')
+const startRectAfter = nodeRect('START')
+hit = nodeGroup('START')
+pointer('pointerdown', q('.vfsm-canvas'), { x: 50, y: 50 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 30, y: 100 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 30, y: 100 })
+assert.ok(nodeRect('START').y !== startRectAfter.y, 'dragging the second box did not move it')
+click(toolbarButton('undoNode'))
+assert.equal(nodeRect('START').y, startRectAfter.y, 'undo did not restore the last box')
+assert.ok(nodeRect('IDLE').x !== idleRectBefore.x, 'undo restored an older box as well')
+click(toolbarButton('undoNode'))
+assert.equal(nodeRect('IDLE').x, idleRectBefore.x, 'second undo did not restore the first box')
+assert.equal(nodeRect('IDLE').y, idleRectBefore.y)
+console.log('state box drag + undo: OK')
+
+// ---------------------------------------------------------------------------
+// Dragging an edge endpoint moves the connection point, which stays on the box
+// ---------------------------------------------------------------------------
+const pathStartPoint = (path) => {
+  const match = /^M([-\d.]+),([-\d.]+)/.exec(path)
+  return { x: Number(match[1]), y: Number(match[2]) }
+}
+const startEdgeGroup = findStartEdge()
+const sourceNode = nodeRect('IDLE')
+const edgePathBefore = startEdgeGroup.querySelector('.vfsm-edge-line').getAttribute('d')
+const startBefore = pathStartPoint(edgePathBefore)
+hit = startEdgeGroup
+pointer('pointerdown', q('.vfsm-canvas'), { x: startBefore.x, y: startBefore.y })
+pointer('pointermove', q('.vfsm-canvas'), { x: sourceNode.x + 8, y: sourceNode.y + sourceNode.height / 2 })
+pointer('pointerup', q('.vfsm-canvas'), { x: sourceNode.x + 8, y: sourceNode.y + sourceNode.height / 2 })
+const edgePathAfter = findStartEdge().querySelector('.vfsm-edge-line').getAttribute('d')
+assert.notEqual(edgePathAfter, edgePathBefore, 'dragging an edge endpoint did not move the connection point')
+const startAfter = pathStartPoint(edgePathAfter)
+const left = sourceNode.x
+const right = sourceNode.x + sourceNode.width
+const top = sourceNode.y
+const bottom = sourceNode.y + sourceNode.height
+const onBoundary = Math.min(
+  Math.abs(startAfter.x - left), Math.abs(startAfter.x - right),
+  Math.abs(startAfter.y - top), Math.abs(startAfter.y - bottom),
+)
+assert.ok(onBoundary <= 6, 'connection point left the box boundary: ' + JSON.stringify(startAfter))
+assert.ok(startAfter.x >= left - 6 && startAfter.x <= right + 6
+  && startAfter.y >= top - 6 && startAfter.y <= bottom + 6,
+'dragged connection point is outside the box')
+console.log('connection point drag: OK')
+
+// ---------------------------------------------------------------------------
 // Fullscreen toggle keeps the diagram usable and Escape exits the overlay
 // ---------------------------------------------------------------------------
 click(toolbarButton('fullscreen'))
