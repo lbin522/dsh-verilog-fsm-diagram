@@ -1508,18 +1508,17 @@ window.__ModuleLoader__.load({
         const state = fsm.states[order]
         const nameText = state === undefined ? name : state.name
         const encoding = state === undefined || state.encoding === undefined ? '' : state.encoding
-        const synthetic = state !== undefined && state.synthetic === true
-        const width = synthetic ? 22 : Math.max(108, Math.min(260, Math.round(estimateTextWidth(nameText, 13) + 38)))
-        let displayName = synthetic ? '' : nameText
-        if (!synthetic && estimateTextWidth(nameText, 13) > width - 30) {
+        const width = Math.max(108, Math.min(260, Math.round(estimateTextWidth(nameText, 13) + 38)))
+        let displayName = nameText
+        if (estimateTextWidth(nameText, 13) > width - 30) {
           while (displayName.length > 1 && estimateTextWidth(displayName + '…', 13) > width - 30) {
             displayName = displayName.slice(0, -1)
           }
           displayName += '…'
         }
         const node = {
-          id: name, kind: 'state', name: nameText, displayName, encoding, synthetic,
-          width, height: synthetic ? 22 : nodeHeight, halfWidth: width / 2, rank: rank.get(name),
+          id: name, kind: 'state', name: nameText, displayName, encoding,
+          width, height: nodeHeight, halfWidth: width / 2, rank: rank.get(name),
           order, cx: 0, cy: 0, reset: fsm.resetState === name,
         }
         nodes.set(name, node)
@@ -2018,7 +2017,6 @@ window.__ModuleLoader__.load({
         x: node.x,
         y: node.y,
         rank: node.rank,
-        synthetic: node.synthetic === true,
         reset: fsm.resetState === node.name,
       }))
       const outputEdges = annotated.map(item => {
@@ -2177,9 +2175,6 @@ window.__ModuleLoader__.load({
         + '.vfsm-svg .vfsm-node.is-selected .vfsm-node-rect{stroke:' + colors.accent + ';stroke-width:2.6}'
         + '.vfsm-svg .vfsm-node-name{fill:' + colors.text + ';font-size:13px;font-weight:600}'
         + '.vfsm-svg .vfsm-node-enc{fill:' + colors.muted + ';font-size:10px}'
-        + '.vfsm-svg .vfsm-junction-dot{fill:' + colors.surface + ';stroke:' + colors.border + ';stroke-width:1.4}'
-        + '.vfsm-svg .vfsm-node.is-branch{cursor:grab}'
-        + '.vfsm-svg .vfsm-node.is-branch:hover .vfsm-junction-dot{stroke:' + colors.accent + ';stroke-width:2}'
         + '.vfsm-svg .vfsm-edge-line{fill:none;stroke:' + colors.muted + ';stroke-width:1.3;stroke-linecap:round}'
         + '.vfsm-svg .vfsm-edge{cursor:grab}'
         + '.vfsm-svg .vfsm-edge-hit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke}'
@@ -2246,21 +2241,12 @@ window.__ModuleLoader__.load({
       lineParts.push('</g>')
       lineParts.push('<g class="vfsm-nodes">')
       for (const node of diagram.nodes) {
-        const classes = 'vfsm-node' + (node.reset ? ' is-reset' : '')
-          + (node.synthetic ? ' is-branch' : '')
-          + (node.name === selected ? ' is-selected' : '')
+        const classes = 'vfsm-node' + (node.reset ? ' is-reset' : '') + (node.name === selected ? ' is-selected' : '')
         lineParts.push('<g class="' + classes + '" data-state="' + escapeXml(node.name) + '">')
-        const cx = node.x + node.width / 2
-        const cy = node.y + node.height / 2
-        if (node.synthetic) {
-          lineParts.push('<circle class="vfsm-junction-dot" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1)
-            + '" r="6.5"/>')
-          lineParts.push('<title>' + escapeXml(node.name) + '</title>')
-          lineParts.push('</g>')
-          continue
-        }
         lineParts.push('<rect class="vfsm-node-rect" x="' + node.x.toFixed(1) + '" y="' + node.y.toFixed(1)
           + '" width="' + node.width.toFixed(1) + '" height="' + node.height.toFixed(1) + '" rx="10"/>')
+        const cx = node.x + node.width / 2
+        const cy = node.y + node.height / 2
         if (node.encoding !== '') {
           lineParts.push('<text class="vfsm-node-name" x="' + cx.toFixed(1) + '" y="' + (cy - 2).toFixed(1)
             + '" text-anchor="middle">' + escapeXml(node.displayName) + '</text>')
@@ -2373,7 +2359,6 @@ window.__ModuleLoader__.load({
       openInCode: 'Open in code mode',
       tableEmpty: 'Add at least one transition to generate Verilog.',
       labelNumber: 'Condition numbers',
-      branchTree: 'Branch tree',
       fullscreen: 'Fullscreen',
       resetRoutes: 'Reset edge routes',
       undoRoute: 'Undo last edge',
@@ -2461,7 +2446,6 @@ window.__ModuleLoader__.load({
       openInCode: '在代码模式打开',
       tableEmpty: '至少添加一条跳转才能生成 Verilog。',
       labelNumber: '条件编号',
-      branchTree: '树状分支',
       fullscreen: '全屏',
       resetRoutes: '重置连线',
       undoRoute: '撤销上一条连线',
@@ -3264,91 +3248,6 @@ body[data-ds-dark-theme] .vfsm-page {
     }
 
     /**
-     * Generation style: fold priority-ordered conditional branches out of one
-     * state into a tree. The trunk carries no condition; each branch segment
-     * leaves a junction in priority order (highest first). A lower-priority
-     * branch drops the negated copies of the higher conditions, because the
-     * tree already encodes the else relationship. Junction nodes are synthetic
-     * states, so the existing node/edge/label dragging works on the tree.
-     */
-    function buildTreeFsm(fsm) {
-      const outgoing = new Map()
-      fsm.transitions.forEach((transition, index) => {
-        if (!outgoing.has(transition.from)) outgoing.set(transition.from, [])
-        outgoing.get(transition.from).push(index)
-      })
-      const keep = new Set(fsm.transitions.map((_, index) => index))
-      const states = fsm.states.slice()
-      const addedStates = []
-      const treeTransitions = []
-      let groupIndex = 0
-      const stripInherited = (raw, inherited) => {
-        const text = (raw || '').trim()
-        if (text === '') return 'else'
-        const parts = text.split(' && ').map(part => part.trim()).filter(part => part !== '')
-        const remaining = parts.filter((part) => {
-          for (const previous of inherited) {
-            if (previous === 'else') continue
-            if (part === previous) return false
-            if (part === '!' + previous) return false
-            if (part === '!(' + previous + ')') return false
-            if (part === '!' + previous.replace(/^\((.*)\)$/, '$1')) return false
-          }
-          return true
-        })
-        return remaining.length === 0 ? 'else' : remaining.join(' && ')
-      }
-      for (const [from, indices] of outgoing) {
-        if (indices.length < 2) continue
-        const branches = indices.map(index => fsm.transitions[index])
-        const conditionalCount = branches.filter(branch => branch.labels.length > 0).length
-        if (conditionalCount === 0) continue
-        // A branch to a state with several labels means OR conditions; keep
-        // one tree branch for that target and shorten every label.
-        const inherited = []
-        const described = branches.map((branch) => {
-          const labels = branch.labels.length === 0
-            ? ['else']
-            : branch.labels.map(label => stripInherited(label, inherited))
-          const unique = []
-          for (const label of labels) if (unique.indexOf(label) < 0) unique.push(label)
-          for (const label of unique) if (label !== 'else') inherited.push(label)
-          return { branch, labels: unique }
-        })
-        const junctionNames = described.map((_, index) => '__branch__' + from + '__' + index)
-        groupIndex += 1
-        for (const name of junctionNames) {
-          if (states.some(state => state.name === name)) continue
-          states.push({ name, encoding: '', synthetic: true })
-          addedStates.push(name)
-        }
-        for (const index of indices) keep.delete(index)
-        // Shared trunk from the source to the first decision junction.
-        treeTransitions.push({ from, to: junctionNames[0], labels: [] })
-        described.forEach((item, index) => {
-          treeTransitions.push({
-            from: junctionNames[index],
-            to: item.branch.to,
-            labels: item.labels,
-          })
-          if (index + 1 < described.length) {
-            treeTransitions.push({ from: junctionNames[index], to: junctionNames[index + 1], labels: [] })
-          }
-        })
-      }
-      if (treeTransitions.length === 0) return fsm
-      const transitions = fsm.transitions.filter((_, index) => keep.has(index)).concat(treeTransitions)
-      return {
-        ...fsm,
-        id: fsm.id,
-        states,
-        transitions,
-        treeMode: true,
-        treeGroupCount: groupIndex,
-      }
-    }
-
-    /**
      * The Verilog FSM panel: a source editor or transition-table editor on the
      * left, the extracted diagram and state table on the right.
      */
@@ -3379,7 +3278,6 @@ body[data-ds-dark-theme] .vfsm-page {
       const [pan, setPan] = useState({ x: 0, y: 0 })
       const [showTable, setShowTable] = useState(sessionState.showTable)
       const [isFullscreen, setIsFullscreen] = useState(false)
-      const [treeStyle, setTreeStyle] = useState(sessionState.treeStyle)
       const fileInput = useRef(null)
       const viewPane = useRef(null)
       const fitRef = useRef(null)
@@ -3406,46 +3304,42 @@ body[data-ds-dark-theme] .vfsm-page {
       const allView = viewAll && fsms.length > 1
       const activeIndex = fsms.length === 0 ? 0 : Math.min(fsmIndex, fsms.length - 1)
       const current = fsms.length === 0 ? null : fsms[activeIndex]
-      const view = useMemo(
-        () => (current === null ? null : (treeStyle ? buildTreeFsm(current) : current)),
-        [current, treeStyle],
-      )
       const numberingInfo = useMemo(
-        () => (view === null ? { numberMap: {}, legend: [] } : buildConditionNumbering(view)),
-        [view],
+        () => (current === null ? { numberMap: {}, legend: [] } : buildConditionNumbering(current)),
+        [current],
       )
       const currentEdgeModes = useMemo(
-        () => (view === null ? {} : edgeModeMap(view, numbering, edgeModes)),
-        [view, numbering, edgeModes],
+        () => (current === null ? {} : edgeModeMap(current, numbering, edgeModes)),
+        [current, numbering, edgeModes],
       )
       const currentLegend = useMemo(
-        () => (view === null ? [] : legendForEdgeModes(view, numberingInfo, currentEdgeModes)),
-        [view, numberingInfo, currentEdgeModes],
+        () => (current === null ? [] : legendForEdgeModes(current, numberingInfo, currentEdgeModes)),
+        [current, numberingInfo, currentEdgeModes],
       )
       const currentRouteOffsets = useMemo(
-        () => (view === null ? {} : routeOffsetMap(view, routeOffsets)),
-        [view, routeOffsets],
+        () => (current === null ? {} : routeOffsetMap(current, routeOffsets)),
+        [current, routeOffsets],
       )
       const currentNodeOffsets = useMemo(
-        () => (view === null ? {} : nodeOffsetMap(view, nodeOffsets)),
-        [view, nodeOffsets],
+        () => (current === null ? {} : nodeOffsetMap(current, nodeOffsets)),
+        [current, nodeOffsets],
       )
       const currentConnections = useMemo(
-        () => (view === null ? {} : connectionOffsetMap(view, connectionOffsets)),
-        [view, connectionOffsets],
+        () => (current === null ? {} : connectionOffsetMap(current, connectionOffsets)),
+        [current, connectionOffsets],
       )
       const currentLabelPlacements = useMemo(
-        () => (view === null ? {} : labelPlacementMap(view, labelPlacements)),
-        [view, labelPlacements],
+        () => (current === null ? {} : labelPlacementMap(current, labelPlacements)),
+        [current, labelPlacements],
       )
-      const diagram = useMemo(() => (view === null ? null : layoutFsm(view, {
+      const diagram = useMemo(() => (current === null ? null : layoutFsm(current, {
         labelModes: currentEdgeModes,
         numberMap: numberingInfo.numberMap,
         routeOffsets: currentRouteOffsets,
         nodeOffsets: currentNodeOffsets,
         connectionOffsets: currentConnections,
         labelPlacements: currentLabelPlacements,
-      })), [view, currentEdgeModes, numberingInfo, currentRouteOffsets, currentNodeOffsets, currentConnections, currentLabelPlacements])
+      })), [current, currentEdgeModes, numberingInfo, currentRouteOffsets, currentNodeOffsets, currentConnections, currentLabelPlacements])
       const svg = useMemo(
         () => (diagram === null ? '' : svgDocument(diagram, {
           colors: CSS_COLORS,
@@ -3462,20 +3356,19 @@ body[data-ds-dark-theme] .vfsm-page {
       const allCards = useMemo(() => {
         if (!allView) return []
         return fsms.map((fsm) => {
-          const cardFsm = treeStyle ? buildTreeFsm(fsm) : fsm
-          const info = buildConditionNumbering(cardFsm)
-          const modes = edgeModeMap(cardFsm, numbering, edgeModes)
-          const offsets = routeOffsetMap(cardFsm, routeOffsets)
-          const cardDiagram = layoutFsm(cardFsm, {
+          const info = buildConditionNumbering(fsm)
+          const modes = edgeModeMap(fsm, numbering, edgeModes)
+          const offsets = routeOffsetMap(fsm, routeOffsets)
+          const cardDiagram = layoutFsm(fsm, {
             labelModes: modes,
             numberMap: info.numberMap,
             routeOffsets: offsets,
-            nodeOffsets: nodeOffsetMap(cardFsm, nodeOffsets),
-            connectionOffsets: connectionOffsetMap(cardFsm, connectionOffsets),
-            labelPlacements: labelPlacementMap(cardFsm, labelPlacements),
+            nodeOffsets: nodeOffsetMap(fsm, nodeOffsets),
+            connectionOffsets: connectionOffsetMap(fsm, connectionOffsets),
+            labelPlacements: labelPlacementMap(fsm, labelPlacements),
           })
           return {
-            fsm: cardFsm,
+            fsm,
             diagram: cardDiagram,
             svg: svgDocument(cardDiagram, {
               colors: CSS_COLORS,
@@ -3485,11 +3378,11 @@ body[data-ds-dark-theme] .vfsm-page {
               numberMap: info.numberMap,
               edgeModes: modes,
               palette: CSS_EDGE_PALETTE,
-              legend: legendForEdgeModes(cardFsm, info, modes),
+              legend: legendForEdgeModes(fsm, info, modes),
             }),
           }
         })
-      }, [allView, fsms, numbering, edgeModes, routeOffsets, nodeOffsets, connectionOffsets, labelPlacements, treeStyle, t])
+      }, [allView, fsms, numbering, edgeModes, routeOffsets, nodeOffsets, connectionOffsets, labelPlacements, t])
 
       const fit = useCallback(() => {
         const element = viewport.current
@@ -3543,14 +3436,14 @@ body[data-ds-dark-theme] .vfsm-page {
         // user's zoom and pan.
         const key = allView
           ? 'all'
-          : (view === null
+          : (current === null
             ? 'none'
-            : view.id + ':' + view.states.length + ':' + view.transitions.length + ':' + (treeStyle ? 'tree' : 'plain'))
+            : current.id + ':' + current.states.length + ':' + current.transitions.length)
         if (key === fitKey.current) return
         fitKey.current = key
         setSelected(null)
         if (!allView) fit()
-      }, [parsed, view, treeStyle, fit, allView])
+      }, [parsed, current, fit, allView])
 
       // A newly shown legend must not change the zoom; pan just enough to keep
       // its bottom edge reachable inside the viewport.
@@ -4032,14 +3925,6 @@ body[data-ds-dark-theme] .vfsm-page {
         })
       }
 
-      const toggleTreeStyle = () => {
-        setTreeStyle((value) => {
-          sessionState.treeStyle = !value
-          return !value
-        })
-        setSelected(null)
-      }
-
       const toggleFullscreen = async () => {
         const element = viewPane.current
         if (isFullscreen) {
@@ -4372,12 +4257,6 @@ body[data-ds-dark-theme] .vfsm-page {
             'aria-pressed': numbering,
             onClick: toggleNumbering,
           }, t('labelNumber')),
-          h('button', {
-            type: 'button',
-            className: 'vfsm-btn vfsm-btn-sm' + (treeStyle ? ' is-on' : ''),
-            'aria-pressed': treeStyle,
-            onClick: toggleTreeStyle,
-          }, t('branchTree')),
           allView
             ? null
             : h('button', { type: 'button', className: 'vfsm-btn vfsm-btn-sm', onClick: toggleTable, disabled: current === null }, showTable ? t('hideTable') : t('table')),
@@ -4549,7 +4428,6 @@ body[data-ds-dark-theme] .vfsm-page {
       nodeHistory: [],
       connectionOffsets: {},
       labelPlacements: {},
-      treeStyle: false,
       showVerilog: true,
       table: createDefaultTable(),
     }
@@ -4690,7 +4568,6 @@ body[data-ds-dark-theme] .vfsm-page {
         svgDocument,
         wrapLabel,
         buildConditionNumbering,
-        buildTreeFsm,
         generateVerilogFromTable,
         parseTransitionTableText,
         sanitizeIdentifier,
