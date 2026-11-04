@@ -13,6 +13,8 @@
 - **交互**：缩放、拖拽、适应窗口、全屏、点击状态高亮其跳转、状态表（编码 + 完整跳转条件）、下载独立 SVG。
 - 侧边栏入口默认折叠在「更多」菜单中（`client.js` 的 `SIDEBAR_FOLD` 改为 `'row'` 可恢复独立侧边栏行）。
 
+- **分支树风格**：工具栏「树状分支」把同一状态按优先级展开的条件分支折成一棵树——共享主干、优先级高的条件段靠近根、低优先级不重复前面条件文字、每个条件分支段独立编号；交点/线段可拖动调整。CLI `--tree` 同样可用。
+
 ## 安装（DSH Web）
 
 本仓库是一个 DSH 插件 bundle（package.json 中声明 `dsh.bundle.patch` 和 `dsh.client`），不是独立网站。
@@ -43,6 +45,7 @@
 ```bash
 node cli.mjs <verilog.v> --list                       # 列出文件中的 FSM
 node cli.mjs <verilog.v> --out <dir> --numbered       # 渲染 SVG（数字编号 + 图例）
+node cli.mjs <verilog.v> --out <dir> --tree --numbered # 树状分支风格 + 编号
 node cli.mjs <verilog.v> --fsm <module|stateVar>      # 选择某个 FSM
 node cli.mjs <verilog.v> --all --out <dir>            # 每个 FSM 各一张
 ```

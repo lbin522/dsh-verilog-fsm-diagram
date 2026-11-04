@@ -17,7 +17,7 @@ const module = captured.factory((spec) => {
 const internals = module.__internals
 const {
   parseVerilog, generateVerilogFromTable, parseTransitionTableText, buildConditionNumbering,
-  svgDocument, layoutFsm, sessionState, sanitizeIdentifier,
+  buildTreeFsm, svgDocument, layoutFsm, sessionState, sanitizeIdentifier,
 } = internals
 
 // The panel component comes from the registrations, like the browser does.
@@ -245,6 +245,43 @@ const embeddedSvg = svgDocument(embeddedDiagram, {
 assert.ok(embeddedSvg.includes('class="vfsm-label-rect is-number"'), 'numbered chips are not marked as embedded')
 assert.ok(!plainSvg.includes('vfsm-label-rect is-number'), 'text chips must keep the bordered style')
 console.log('embedded numbering: OK')
+// Branch-tree generation style: keep priorities, drop inherited negations,
+// give each conditional branch segment its own number, and draw junctions.
+const branchCode = `
+module branch_fsm(input clk, input rst_n, input a, input b, input c, output reg [1:0] state);
+localparam IDLE = 2'd0, S1 = 2'd1, S2 = 2'd2, S3 = 2'd3;
+always @(posedge clk or negedge rst_n) begin
+  if (!rst_n) state <= IDLE;
+  else begin
+    case (state)
+      IDLE: begin
+        if (a) state <= S1;
+        else if (b) state <= S2;
+        else if (c) state <= S3;
+        else state <= IDLE;
+      end
+      S1: state <= IDLE;
+      default: state <= IDLE;
+    endcase
+  end
+end
+endmodule`
+const branchFsm = parseVerilog(branchCode).fsms[0]
+const treeFsm = buildTreeFsm(branchFsm)
+const junctions = treeFsm.states.filter(state => state.synthetic === true)
+assert.equal(junctions.length, 4, 'each priority branch needs a junction')
+const branchLabels = treeFsm.transitions.filter(t => t.from.startsWith('__branch__')).map(t => t.labels.join(' / '))
+assert.ok(branchLabels.includes('a') && branchLabels.includes('b') && branchLabels.includes('c') && branchLabels.includes('else'),
+  'tree branch labels: ' + JSON.stringify(branchLabels))
+assert.ok(branchLabels.every(label => !label.includes('!a') && !label.includes('!b')),
+  'lower branches must not repeat higher conditions: ' + JSON.stringify(branchLabels))
+const treeInfo = buildConditionNumbering(treeFsm)
+assert.equal(JSON.stringify(treeInfo.legend.map(row => row.label)), JSON.stringify(['a', 'b', 'c', 'else']))
+const treeDiagram = layoutFsm(treeFsm)
+assert.equal(treeDiagram.nodes.filter(node => node.synthetic).length, 4)
+assert.ok(treeDiagram.nodes.filter(node => node.synthetic).every(node => node.width <= 22 && node.height <= 22))
+assert.ok(treeDiagram.edges.length >= 9, 'tree needs trunk, branch and continuation segments')
+console.log('branch tree style: OK')
 console.log('edge colours: OK')
 console.log('ALL FEATURE TESTS PASSED (incl. edge colours)')
 

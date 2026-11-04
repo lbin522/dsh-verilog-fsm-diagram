@@ -9,11 +9,12 @@
  * Usage:
  *   node cli.mjs <verilog.v> --list
  *   node cli.mjs <verilog.v> [--fsm <module|stateVar|index>] [--out <dir-or-file>]
- *               [--numbered] [--title <text>] [--legend-title <text>] [--all]
+ *               [--numbered] [--tree] [--title <text>] [--legend-title <text>] [--all]
  *
  * Notes:
  *   - SVG only (the plugin UI itself also exports SVG);
  *   - text labels by default, `--numbered` renders per-edge numbers + legend;
+ *   - `--tree` folds priority-ordered conditional branches into a branch tree;
  *   - `--all` writes one SVG per FSM found in the file.
  */
 import fs from 'node:fs'
@@ -83,17 +84,18 @@ const LIGHT_COLORS = {
 function usage() {
   console.error(
     'usage: node cli.mjs <verilog.v> [--list] [--fsm <module|stateVar|index>] ' +
-    '[--out <dir-or-file>] [--numbered] [--title <text>] [--legend-title <text>] [--all]'
+    '[--out <dir-or-file>] [--numbered] [--tree] [--title <text>] [--legend-title <text>] [--all]'
   )
 }
 
 function parseArgs(argv) {
-  const args = { input: '', list: false, fsm: '', out: '', numbered: false, all: false, title: '', legendTitle: '' }
+  const args = { input: '', list: false, fsm: '', out: '', numbered: false, tree: false, all: false, title: '', legendTitle: '' }
   const rest = []
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i]
     if (value === '--list') args.list = true
     else if (value === '--numbered') args.numbered = true
+    else if (value === '--tree') args.tree = true
     else if (value === '--all') args.all = true
     else if (value === '--fsm') args.fsm = argv[++i] || ''
     else if (value === '--out') args.out = argv[++i] || ''
@@ -120,7 +122,8 @@ function selectFsms(fsms, selector, all) {
 }
 
 function svgFor(fsm, args) {
-  const diagram = internals.layoutFsm(fsm, {})
+  const view = args.tree ? internals.buildTreeFsm(fsm) : fsm
+  const diagram = internals.layoutFsm(view, {})
   const base = {
     colors: LIGHT_COLORS,
     labels: {
@@ -130,7 +133,7 @@ function svgFor(fsm, args) {
     },
   }
   if (args.numbered) {
-    const numbering = internals.buildConditionNumbering(fsm)
+    const numbering = internals.buildConditionNumbering(view)
     return internals.svgDocument(diagram, {
       ...base,
       numbered: true,

@@ -362,6 +362,52 @@ assert.ok(Math.abs(labelReset.x - labelBefore.x) < 0.6 && Math.abs(labelReset.y 
 console.log('label position drag: OK')
 
 // ---------------------------------------------------------------------------
+// Branch-tree generation style: junctions, short labels, per-segment numbers
+// ---------------------------------------------------------------------------
+const branchCode = `module branch_fsm(input clk, input rst_n, input a, input b, input c, output reg [1:0] state);
+localparam IDLE = 2'd0, S1 = 2'd1, S2 = 2'd2, S3 = 2'd3;
+always @(posedge clk or negedge rst_n) begin
+  if (!rst_n) state <= IDLE;
+  else begin
+    case (state)
+      IDLE: begin
+        if (a) state <= S1;
+        else if (b) state <= S2;
+        else if (c) state <= S3;
+        else state <= IDLE;
+      end
+      S1: state <= IDLE;
+      default: state <= IDLE;
+    endcase
+  end
+end
+endmodule`
+setTextarea(q('.vfsm-code'), branchCode)
+click(toolbarButton('branchTree'))
+assert.equal(qa('.vfsm-node.is-branch').length, 4, 'tree mode did not draw four branch junctions')
+const treeMarkup = svgMarkup()
+assert.ok(!treeMarkup.includes('!a'), 'tree mode repeated the higher-priority condition text')
+assert.ok(treeMarkup.includes('data-state="__branch__IDLE__0"'))
+click(toolbarButton('labelNumber'))
+const legendText = qa('.vfsm-legend-text').map(node => node.textContent)
+assert.ok(legendText.includes('a') && legendText.includes('b') && legendText.includes('c') && legendText.includes('else'),
+  'tree branch segments are not numbered individually: ' + JSON.stringify(legendText))
+const junction = q('[data-state="__branch__IDLE__0"]')
+const junctionDot = () => Number(q('[data-state="__branch__IDLE__0"] .vfsm-junction-dot').getAttribute('cx'))
+const junctionBefore = junctionDot()
+hit = junction
+pointer('pointerdown', q('.vfsm-canvas'), { x: 20, y: 20 })
+pointer('pointermove', q('.vfsm-canvas'), { x: 70, y: 50 })
+pointer('pointerup', q('.vfsm-canvas'), { x: 70, y: 50 })
+assert.notEqual(junctionDot(), junctionBefore, 'branch junction is not movable')
+click(toolbarButton('undoNode'))
+assert.equal(junctionDot(), junctionBefore, 'undo did not restore the branch junction')
+click(toolbarButton('branchTree'))
+assert.equal(qa('.vfsm-node.is-branch').length, 0, 'tree mode did not turn off')
+click(toolbarButton('labelNumber'))
+console.log('branch tree style interaction: OK')
+
+// ---------------------------------------------------------------------------
 // Fullscreen toggle keeps the diagram usable and Escape exits the overlay
 // ---------------------------------------------------------------------------
 click(toolbarButton('fullscreen'))
